@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chrysalis Hive Telemetry</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0b0c10;
+            --glass-bg: rgba(20, 22, 30, 0.65);
+            --glass-border: rgba(255, 255, 255, 0.08);
+            --accent-cyan: #45f3ff;
+            --accent-magenta: #e020ff;
+            --text-main: #dfdfe6;
+            --text-muted: #8c8f9f;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg-color);
+            background-image: 
+                radial-gradient(circle at 15% 50%, rgba(69, 243, 255, 0.08), transparent 40%),
+                radial-gradient(circle at 85% 30%, rgba(224, 32, 255, 0.08), transparent 40%);
+            color: var(--text-main);
+            font-family: 'Outfit', sans-serif;
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+
+        .dashboard-container {
+            width: 90%;
+            max-width: 1200px;
+            height: 85vh;
+            background: var(--glass-bg);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border: 1px solid var(--glass-border);
+            border-radius: 20px;
+            box-shadow: 0 30px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .header {
+            padding: 24px 32px;
+            border-bottom: 1px solid var(--glass-border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: linear-gradient(180deg, rgba(255,255,255,0.03) 0%, transparent 100%);
+        }
+
+        .title-group {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .logo {
+            font-weight: 800;
+            font-size: 24px;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-magenta));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: 1px;
+        }
+
+        .badge {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            background: rgba(69, 243, 255, 0.1);
+            color: var(--accent-cyan);
+            padding: 4px 10px;
+            border-radius: 100px;
+            border: 1px solid rgba(69, 243, 255, 0.2);
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 14px;
+            color: var(--text-muted);
+        }
+
+        .pulse {
+            width: 10px;
+            height: 10px;
+            background: #2dd4bf;
+            border-radius: 50%;
+            box-shadow: 0 0 10px #2dd4bf, 0 0 20px #2dd4bf;
+            animation: pulse-glow 2s infinite;
+        }
+
+        @keyframes pulse-glow {
+            0% { transform: scale(0.95); opacity: 0.8; }
+            50% { transform: scale(1.1); opacity: 1; box-shadow: 0 0 15px #2dd4bf, 0 0 30px #2dd4bf; }
+            100% { transform: scale(0.95); opacity: 0.8; }
+        }
+
+        .feed-container {
+            flex-grow: 1;
+            padding: 24px 32px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            scroll-behavior: smooth;
+        }
+
+        /* Scrollbar Styling */
+        .feed-container::-webkit-scrollbar { width: 8px; }
+        .feed-container::-webkit-scrollbar-track { background: transparent; }
+        .feed-container::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 10px; }
+        .feed-container::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.2); }
+
+        .log-entry {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            padding: 16px 20px;
+            border-radius: 12px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            line-height: 1.6;
+            color: #b0b4c4;
+            opacity: 0;
+            transform: translateY(10px);
+            animation: fade-in-up 0.4s ease forwards;
+            word-break: break-word;
+        }
+        
+        .log-entry.director {
+            border-left: 3px solid var(--accent-magenta);
+            background: linear-gradient(90deg, rgba(224, 32, 255, 0.05) 0%, transparent 100%);
+        }
+
+        .log-entry.clone {
+            border-left: 3px solid var(--accent-cyan);
+            background: linear-gradient(90deg, rgba(69, 243, 255, 0.05) 0%, transparent 100%);
+        }
+
+        @keyframes fade-in-up {
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .log-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-family: 'Outfit', sans-serif;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .timestamp {
+            font-family: 'JetBrains Mono', monospace;
+            opacity: 0.6;
+        }
+        
+        .log-content {
+            white-space: pre-wrap;
+        }
+        
+        /* Highlight specific syntax natively */
+        .highlight-clone { color: var(--accent-cyan); font-weight: 600; }
+        .highlight-fail { color: #ff4b4b; font-weight: 600; }
+        .highlight-pass { color: #2dd4bf; font-weight: 600; }
+    </style>
+</head>
+<body>
+    <div class="dashboard-container">
+        <div class="header">
+            <div class="title-group">
+                <div class="logo">CHRYSALIS</div>
+                <div class="badge">Swarm Telemetry Loop</div>
+            </div>
+            <div class="status-indicator">
+                <span>Listening for Whispers</span>
+                <div class="pulse" id="pulse-dot"></div>
+            </div>
+        </div>
+        <div class="feed-container" id="feed">
+            <!-- Logs dynamically pumped in here via SSE -->
+        </div>
+    </div>
+
+    <script>
+        const feed = document.getElementById('feed');
+        const pulseDot = document.getElementById('pulse-dot');
+        
+        // Connect to the Hive
+        const eventSource = new EventSource('/api/stream');
+
+        function formatLog(message) {
+            let html = message
+                .replace(/Clone \[(.*?)\]/g, '<span class="highlight-clone">Clone [$1]</span>')
+                .replace(/FAIL:/g, '<span class="highlight-fail">FAIL:</span>')
+                .replace(/PASS(.*?)$/gm, '<span class="highlight-pass">PASS$1</span>');
+            return html;
+        }
+
+        eventSource.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+            
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            
+            // Assign class based on sender heuristic
+            if (data.message.includes('14B') || data.message.includes('DIRECTOR')) {
+                entry.classList.add('director');
+            } else if (data.message.includes('Clone ') || data.message.includes('Typist')) {
+                entry.classList.add('clone');
+            }
+
+            const header = document.createElement('div');
+            header.className = 'log-header';
+            
+            const timeSpan = document.createElement('span');
+            timeSpan.className = 'timestamp';
+            const date = new Date(data.timestamp);
+            timeSpan.innerText = date.toLocaleTimeString([], { hour12: false }) + '.' + String(date.getMilliseconds()).padStart(3, '0');
+            
+            header.appendChild(timeSpan);
+            
+            const content = document.createElement('div');
+            content.className = 'log-content';
+            content.innerHTML = formatLog(data.message);
+
+            entry.appendChild(header);
+            entry.appendChild(content);
+
+            feed.appendChild(entry);
+            
+            // Auto-scroll logic
+            feed.scrollTo({
+                top: feed.scrollHeight, 
+                behavior: 'smooth'
+            });
+
+            // Activity flicker for pulse
+            pulseDot.style.boxShadow = '0 0 20px #e020ff, 0 0 40px #e020ff';
+            pulseDot.style.background = '#e020ff';
+            setTimeout(() => {
+                pulseDot.style.boxShadow = '0 0 10px #2dd4bf, 0 0 20px #2dd4bf';
+                pulseDot.style.background = '#2dd4bf';
+            }, 300);
+        };
+        
+        eventSource.onerror = function() {
+            pulseDot.style.animation = 'none';
+            pulseDot.style.background = '#ff4b4b';
+            pulseDot.style.boxShadow = '0 0 10px #ff4b4b';
+        };
+    </script>
+</body>
+</html>

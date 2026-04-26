@@ -1,0 +1,50 @@
+{
+    "name": "@krusch/toolkit",
+    "version": "1.2.0",
+    "description": "Shared utilities for homelab projects — LLM clients, config, database, image generation, scheduling, auth, streaming",
+    "type": "module",
+    "main": "index.js",
+    "exports": {
+        ".": "./index.js",
+        "./llm": "./llm.js",
+        "./json-parse": "./json-parse.js",
+        "./config": "./config.js",
+        "./db": "./db.js",
+        "./imagen": "./imagen.js",
+        "./scheduler": "./scheduler.js",
+        "./auth": "./auth.js",
+        "./streaming": "./streaming.js",
+        "./vision": "./vision.js",
+        "./gc-chat": "./gc-chat.js",
+        "./agents": "./agents.js",
+        "./video-walkthrough": "./video-walkthrough.js",
+        "./calculator": "./calculator.js",
+        "./ar-scene": "./ar-scene.js",
+        "./ar-routing": "./ar-routing.js",
+        "./brain": "./brain/ensemble.js",
+        "./brain/hive_mind": "./brain/hive_mind.js",
+        "./brain/hive_mind.js": "./brain/hive_mind.js"
+    },
+    "dependencies": {
+        "@google/genai": "^1.43.0",
+        "better-sqlite3": "^11.10.0",
+        "canvas": "^3.2.3",
+        "cors": "^2.8.6",
+        "dotenv": "^16.4.7",
+        "express": "^5.2.1",
+        "jsonwebtoken": "^9.0.0",
+        "multer": "^2.1.1",
+        "node-cron": "^3.0.3",
+        "pgvector": "^0.2.1",
+        "undici": "^8.0.2",
+        "uuid": "^13.0.0"
+    },
+    "keywords": [
+        "homelab",
+        "toolkit",
+        "ai",
+        "llm"
+    ],
+    "author": "krusch",
+    "license": "UNLICENSED"
+}

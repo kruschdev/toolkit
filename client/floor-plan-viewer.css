@@ -1,0 +1,266 @@
+/* ==========================================
+ * FloorPlanViewer Styles
+ * Shared 3D viewer component styles for BuildOS
+ * ========================================== */
+
+/* Container */
+.fpv-container {
+  position: relative;
+  width: 100%;
+  height: 500px;
+  min-height: 400px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #1a1a2e;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.fpv-container canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+  border-radius: 12px;
+}
+
+/* Tooltip */
+.fpv-tooltip {
+  position: absolute;
+  bottom: 16px;
+  left: 16px;
+  background: rgba(15, 15, 30, 0.92);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  padding: 12px 16px;
+  color: #e2e8f0;
+  font-size: 13px;
+  line-height: 1.5;
+  max-width: 280px;
+  pointer-events: none;
+  z-index: 10;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.fpv-tooltip strong {
+  color: #ffffff;
+  font-size: 14px;
+}
+
+.fpv-tooltip-type {
+  color: #a78bfa;
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+.fpv-tooltip-confidence {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+.fpv-confidence-high {
+  background: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+}
+
+.fpv-confidence-medium {
+  background: rgba(251, 191, 36, 0.2);
+  color: #fbbf24;
+}
+
+.fpv-confidence-low {
+  background: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+}
+
+/* Trade Overlay Controls */
+.fpv-overlay-controls {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 10;
+}
+
+.fpv-overlay-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(15, 15, 30, 0.85);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: #e2e8f0;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-transform: capitalize;
+}
+
+.fpv-overlay-btn:hover {
+  background: rgba(30, 30, 60, 0.9);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.fpv-overlay-btn.active {
+  border-color: var(--trade-color, #a78bfa);
+  box-shadow: 0 0 8px rgba(167, 139, 250, 0.3);
+}
+
+.fpv-overlay-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--trade-color, #a78bfa);
+}
+
+.fpv-overlay-btn:not(.active) .fpv-overlay-dot {
+  opacity: 0.3;
+}
+
+/* View Mode Toggle */
+.fpv-view-toggle {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.fpv-view-toggle-btn {
+  padding: 6px 14px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.fpv-view-toggle-btn:hover {
+  color: #e2e8f0;
+}
+
+.fpv-view-toggle-btn.active {
+  background: rgba(167, 139, 250, 0.2);
+  color: #a78bfa;
+}
+
+/* Loading State */
+.fpv-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 15, 30, 0.8);
+  z-index: 20;
+}
+
+.fpv-loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid rgba(167, 139, 250, 0.2);
+  border-top-color: #a78bfa;
+  border-radius: 50%;
+  animation: fpv-spin 0.8s linear infinite;
+}
+
+@keyframes fpv-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Empty State */
+.fpv-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+  gap: 8px;
+}
+
+.fpv-empty-icon {
+  font-size: 48px;
+  opacity: 0.5;
+}
+
+.fpv-empty-text {
+  font-size: 14px;
+}
+
+/* Stats Bar */
+.fpv-stats {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  display: flex;
+  gap: 12px;
+  padding: 6px 12px;
+  background: rgba(15, 15, 30, 0.85);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  font-size: 11px;
+  color: #94a3b8;
+  z-index: 10;
+}
+
+.fpv-stat {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.fpv-stat-value {
+  color: #e2e8f0;
+  font-weight: 600;
+}
+
+/* Legend */
+.fpv-legend {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  padding: 8px 12px;
+  background: rgba(15, 15, 30, 0.85);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  font-size: 11px;
+  color: #94a3b8;
+  z-index: 10;
+}
+
+.fpv-legend-title {
+  font-weight: 600;
+  color: #e2e8f0;
+  margin-bottom: 4px;
+}
+
+.fpv-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.fpv-legend-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}

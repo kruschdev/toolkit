@@ -1,0 +1,10 @@
+node_modules/
+.env
+.DS_Store
+*.log
+edge/llama.cpp/
+edge/llama-vulkan/
+edge/models/
+*.db
+*.db-shm
+*.db-wal
