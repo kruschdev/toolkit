@@ -1,0 +1,1 @@
+export { DEFAULT_ID_OP_CEILING, DEFAULT_VOCAB_SIZE, THEORETICAL_BITS_PER_PARAM, VLD_PATTERNS, calculateKnowledgeCapacityEntropy, compileVldSchedule, createVldScalingEngine, detectVldFixedPoint, estimateReasoningDepth, verifyVldCapacityInvariance } from "./research.js";

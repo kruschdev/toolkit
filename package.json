@@ -1,0 +1,314 @@
+{
+    "name": "@krusch/toolkit",
+    "version": "1.7.0",
+    "description": "Shared Lego bricks, TypeScript declarations (.d.ts), & zero-LLM starter blueprints for homelab projects — HTTP, Edge/Workers, Webhooks, Security/SSRF/RateLimit, Schema, Safe YAML, Upload/MIME, Cascade/CircuitBreaker, Audio/Whisper/TTS, CLI, SSE, MCP, PG/pgvector, node:sqlite/FTS5/RRF, React UI, LLM, embeddings, Raw-RAG, Lego Scout",
+    "type": "module",
+    "main": "index.js",
+    "types": "./types/index.d.ts",
+    "bin": {
+        "krusch-lego": "./bin/krusch-lego.js",
+        "krusch-scaffold": "./bin/krusch-lego.js"
+    },
+    "exports": {
+        ".": {
+            "types": "./types/index.d.ts",
+            "default": "./index.js"
+        },
+        "./http": {
+            "types": "./types/http.d.ts",
+            "default": "./http.js"
+        },
+        "./edge": {
+            "types": "./types/edge.d.ts",
+            "default": "./edge.js"
+        },
+        "./webhooks": {
+            "types": "./types/webhooks.d.ts",
+            "default": "./webhooks.js"
+        },
+        "./security": {
+            "types": "./types/security.d.ts",
+            "default": "./security.js"
+        },
+        "./schema": {
+            "types": "./types/schema.d.ts",
+            "default": "./schema.js"
+        },
+        "./yaml": {
+            "types": "./types/yaml.d.ts",
+            "default": "./yaml.js"
+        },
+        "./upload": {
+            "types": "./types/upload.d.ts",
+            "default": "./upload.js"
+        },
+        "./cascade": {
+            "types": "./types/cascade.d.ts",
+            "default": "./cascade.js"
+        },
+        "./audio": {
+            "types": "./types/audio.d.ts",
+            "default": "./audio.js"
+        },
+        "./cli": {
+            "types": "./types/cli.d.ts",
+            "default": "./cli.js"
+        },
+        "./streaming": {
+            "types": "./types/streaming.d.ts",
+            "default": "./streaming.js"
+        },
+        "./mcp": {
+            "types": "./types/mcp.d.ts",
+            "default": "./mcp-server.js"
+        },
+        "./mcp-server": {
+            "types": "./types/mcp-server.d.ts",
+            "default": "./mcp-server.js"
+        },
+        "./pg": {
+            "types": "./types/pg.d.ts",
+            "default": "./pg.js"
+        },
+        "./sqlite": {
+            "types": "./types/sqlite.d.ts",
+            "default": "./sqlite.js"
+        },
+        "./lego-scout": {
+            "types": "./types/lego-scout.d.ts",
+            "default": "./lego-scout.js"
+        },
+        "./catalog": {
+            "types": "./types/catalog.d.ts",
+            "default": "./catalog.js"
+        },
+        "./llm": {
+            "types": "./types/llm.d.ts",
+            "default": "./llm.js"
+        },
+        "./llm-queue": {
+            "types": "./types/llm-queue.d.ts",
+            "default": "./llm-queue.js"
+        },
+        "./json-parse": {
+            "types": "./types/json-parse.d.ts",
+            "default": "./json-parse.js"
+        },
+        "./config": {
+            "types": "./types/config.d.ts",
+            "default": "./config.js"
+        },
+        "./db": {
+            "types": "./types/db.d.ts",
+            "default": "./db.js"
+        },
+        "./imagen": {
+            "types": "./types/imagen.d.ts",
+            "default": "./imagen.js"
+        },
+        "./scheduler": {
+            "types": "./types/scheduler.d.ts",
+            "default": "./scheduler.js"
+        },
+        "./auth": {
+            "types": "./types/auth.d.ts",
+            "default": "./auth.js"
+        },
+        "./evaluator": {
+            "types": "./types/evaluator.d.ts",
+            "default": "./evaluator.js"
+        },
+        "./browser": {
+            "types": "./types/browser.d.ts",
+            "default": "./browser.js"
+        },
+        "./react": {
+            "types": "./types/react.d.ts",
+            "default": "./react.js"
+        },
+        "./dbos": {
+            "types": "./types/dbos.d.ts",
+            "default": "./dbos.js"
+        },
+        "./log": {
+            "types": "./types/log.d.ts",
+            "default": "./log.js"
+        },
+        "./scaffold": {
+            "types": "./types/scaffold.d.ts",
+            "default": "./scaffold.js"
+        },
+        "./calculator": {
+            "types": "./types/calculator.d.ts",
+            "default": "./calculator.js"
+        },
+        "./vision": {
+            "types": "./types/vision.d.ts",
+            "default": "./vision.js"
+        },
+        "./skillopt": {
+            "types": "./types/skillopt.d.ts",
+            "default": "./skillopt.js"
+        },
+        "./skill-state": {
+            "types": "./types/skill-state.d.ts",
+            "default": "./skill-state.js"
+        },
+        "./trajectory-guard": {
+            "types": "./types/trajectory-guard.d.ts",
+            "default": "./trajectory-guard.js"
+        },
+        "./second-thought": {
+            "types": "./types/second-thought.d.ts",
+            "default": "./second-thought.js"
+        },
+        "./kv-cache-manager": {
+            "types": "./types/kv-cache-manager.d.ts",
+            "default": "./kv-cache-manager.js"
+        },
+        "./dhd-deliberation": {
+            "types": "./types/dhd-deliberation.d.ts",
+            "default": "./dhd-deliberation.js"
+        },
+        "./modular-rsi": {
+            "types": "./types/modular-rsi.d.ts",
+            "default": "./modular-rsi.js"
+        },
+        "./skiller": {
+            "types": "./types/skiller.d.ts",
+            "default": "./skiller.js"
+        },
+        "./prune": {
+            "types": "./types/prune.d.ts",
+            "default": "./prune.js"
+        },
+        "./spec-verifier": {
+            "types": "./types/spec-verifier.d.ts",
+            "default": "./spec-verifier.js"
+        },
+        "./memory-invalidation": {
+            "types": "./types/memory-invalidation.d.ts",
+            "default": "./memory-invalidation.js"
+        },
+        "./spatial-kg": {
+            "types": "./types/spatial-kg.d.ts",
+            "default": "./spatial-kg.js"
+        },
+        "./evqa-grounding": {
+            "types": "./types/evqa-grounding.d.ts",
+            "default": "./evqa-grounding.js"
+        },
+        "./polygres": {
+            "types": "./types/polygres.d.ts",
+            "default": "./polygres.js"
+        },
+        "./hydra-action-flow": {
+            "types": "./types/hydra-action-flow.d.ts",
+            "default": "./hydra-action-flow.js"
+        },
+        "./sparse-pr": {
+            "types": "./types/sparse-pr.d.ts",
+            "default": "./sparse-pr.js"
+        },
+        "./physcap-policy": {
+            "types": "./types/physcap-policy.d.ts",
+            "default": "./physcap-policy.js"
+        },
+        "./PhysCaP": {
+            "types": "./types/physcap-policy.d.ts",
+            "default": "./physcap-policy.js"
+        },
+        "./matterport-importer": {
+            "types": "./types/matterport-importer.d.ts",
+            "default": "./matterport-importer.js"
+        },
+        "./ast": {
+            "types": "./types/ast.d.ts",
+            "default": "./ast.js"
+        },
+        "./decide": {
+            "types": "./types/decide.d.ts",
+            "default": "./decide.js"
+        },
+        "./embeddings": {
+            "types": "./types/embeddings.d.ts",
+            "default": "./embeddings.js"
+        },
+        "./vld-scaling": {
+            "types": "./types/vld-scaling.d.ts",
+            "default": "./vld-scaling.js"
+        },
+        "./tracing": {
+            "types": "./types/tracing.d.ts",
+            "default": "./tracing.js"
+        },
+        "./harness-engineering": {
+            "types": "./types/harness-engineering.d.ts",
+            "default": "./harness-engineering.js"
+        },
+        "./raw-rag": {
+            "types": "./types/raw-rag.d.ts",
+            "default": "./raw-rag.js"
+        }
+    },
+    "scripts": {
+        "test": "node --test test_*.js test-*.js",
+        "verify:zero-leaks": "node ./scripts/verify-zero-leaks.js",
+        "lego": "node ./bin/krusch-lego.js"
+    },
+    "engines": {
+        "node": ">=22.0.0"
+    },
+    "peerDependencies": {
+        "react": ">=18.0.0"
+    },
+    "peerDependenciesMeta": {
+        "react": {
+            "optional": true
+        }
+    },
+    "dependencies": {
+        "@google/genai": "^1.43.0",
+        "@modelcontextprotocol/sdk": "^1.29.0",
+        "better-sqlite3": "^11.10.0",
+        "clsx": "^2.1.1",
+        "dotenv": "^16.4.7",
+        "jsonwebtoken": "^9.0.0",
+        "node-cron": "^3.0.3",
+        "pg": "^8.21.0",
+        "puppeteer": "^22.10.0",
+        "tailwind-merge": "^3.6.0",
+        "undici": "^8.0.2"
+    },
+    "optionalDependencies": {
+        "krusch-cascade-router": "https://github.com/kruschdev/krusch-cascade-router/archive/2925ea3ee5ebc6d2059a264a7fd981c3bb970629.tar.gz"
+    },
+    "devDependencies": {
+        "@types/node": "^22.13.0",
+        "typescript": "^5.8.2",
+        "zod": "^4.3.6"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/kruschdev/toolkit.git"
+    },
+    "homepage": "https://github.com/kruschdev/toolkit#readme",
+    "bugs": {
+        "url": "https://github.com/kruschdev/toolkit/issues"
+    },
+    "keywords": [
+        "krusch-stack",
+        "toolkit",
+        "lego-bricks",
+        "typescript",
+        "cloudflare-workers",
+        "python",
+        "ai",
+        "llm",
+        "mcp",
+        "pgvector",
+        "sqlite"
+    ],
+    "author": "kruschdev <kruschdev@users.noreply.github.com>",
+    "license": "MIT"
+}
