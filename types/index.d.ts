@@ -396,6 +396,7 @@ export {
     okMcpResult,
     errorMcpResult,
     validateToolArgs,
+    registerMcpHandlers,
     createMcpServer
 } from './mcp-server.js';
 export type {
@@ -407,6 +408,7 @@ export type {
     McpToolResult,
     ToolArgsValidationResult,
     McpToolHandler,
+    RegisterMcpHandlersOptions,
     CreateMcpServerOptions,
     DisconnectedMcpServerHandle
 } from './mcp-server.js';

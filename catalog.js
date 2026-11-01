@@ -71,6 +71,7 @@ sse.done({ ok: true, tool: 'chat.stream', summary: 'Complete', data: {} });`,
             'okMcpResult',
             'errorMcpResult',
             'validateToolArgs',
+            'registerMcpHandlers',
             'createMcpServer'
         ],
         summary: 'Stdio MCP server factory enforcing INV-STACK-03 4-boolean tool annotations, schema argument validation, and JSON envelopes.',
@@ -2810,7 +2811,7 @@ function stripCommentLines(source = '', { isPython = false } = {}) {
 }
 
 const CATALOG_AUDIT_EXEMPT_PATH_RE =
-    /(?:^(?:lib|lib-py)(?:[\\/]|$)|(?:^|[\\/])homelab[\\/](?:lib|lib-py)(?:[\\/]|$)|(?:^|[\\/])(?:krusch_toolkit|krusch-stack|tests?|__tests__|benchmarks|node_modules)(?:[\\/]|$)|\.(?:test|spec)\.[cm]?[jt]sx?$|(?:^|[\\/])test[_-]|\.(?:md|mdx|txt|rst|json|ya?ml|toml|lock|html|css|svg|sql|sh)$)/i;
+    /(?:^(?:lib|lib-py)(?:[\\/]|$)|(?:^|[\\/])homelab[\\/](?:lib|lib-py)(?:[\\/]|$)|(?:^|[\\/])(?:krusch_toolkit|krusch-stack|tests?|__tests__|benchmarks?|node_modules)(?:[\\/]|$)|\.(?:test|spec)\.[cm]?[jt]sx?$|(?:^|[\\/])test[_-]|\.(?:md|mdx|txt|rst|json|ya?ml|toml|lock|html|css|svg|sql|sh)$)/i;
 
 const MAX_AUDIT_CHARS = 1_048_576;
 

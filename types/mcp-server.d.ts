@@ -57,14 +57,21 @@ export interface ToolArgsValidationResult {
 
 export type McpToolHandler = (
     name: string,
-    args: Record<string, any>
+    args: Record<string, any>,
+    request?: any
 ) => unknown | Promise<unknown>;
 
-export interface CreateMcpServerOptions {
-    connect?: boolean;
+export interface RegisterMcpHandlersOptions {
     validateArgs?: boolean;
     strictTools?: boolean;
     strictUnknownTool?: boolean;
+    rethrowMcpError?: boolean;
+    serverName?: string;
+}
+
+export interface CreateMcpServerOptions extends RegisterMcpHandlersOptions {
+    connect?: boolean;
+    capabilities?: Record<string, unknown>;
     server?: any;
     transport?: any;
 }
@@ -97,6 +104,13 @@ export declare function validateToolArgs(
     toolDef: { inputSchema?: { required?: readonly string[] | string[] } } | null | undefined,
     args?: Record<string, unknown>
 ): ToolArgsValidationResult;
+
+export declare function registerMcpHandlers(
+    server: any,
+    tools?: McpToolInput[],
+    toolHandler?: McpToolHandler,
+    options?: RegisterMcpHandlersOptions
+): DisconnectedMcpServerHandle;
 
 export declare function createMcpServer(
     name: string,

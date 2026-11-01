@@ -1608,5 +1608,57 @@ test('INV-LEGO-27: sseResponse({ deferHeaders: true }) defers writeHead for MCP 
     assert.equal(handle.signal.aborted, true);
 });
 
+test('INV-LEGO-28: registerMcpHandlers synchronous wiring, cross-realm rethrowMcpError, and singular benchmark/ audit exemption', async () => {
+    const { registerMcpHandlers, okMcpResult } = await import('./mcp-server.js');
+    const { auditBoilerplateText } = await import('./catalog.js');
 
+    const handlers = new Map();
+    const mockServer = {
+        setRequestHandler(schema, fn) {
+            handlers.set(schema, fn);
+        }
+    };
 
+    const handle = registerMcpHandlers(
+        mockServer,
+        [{ name: 'sync_probe', description: 'Sync handler check' }],
+        async (name, args, req) => {
+            if (args.failMcp) {
+                const rpcErr = new Error('Unknown tool');
+                rpcErr.name = 'McpError';
+                rpcErr.code = -32601;
+                throw rpcErr;
+            }
+            if (args.failGeneric) {
+                const dbErr = new Error('Connection refused');
+                dbErr.code = 'ECONNREFUSED';
+                throw dbErr;
+            }
+            return okMcpResult(name, 'OK', { requestMeta: req?.meta ?? null });
+        },
+        { rethrowMcpError: true, validateArgs: false }
+    );
+
+    assert.equal(handlers.size, 2);
+    assert.equal(handle.normalizedTools[0].annotations.readOnlyHint, true);
+
+    const okRes = await handle.callTool({ params: { name: 'sync_probe', arguments: {} }, meta: 'req-1' });
+    assert.equal(JSON.parse(okRes.content[0].text).data.requestMeta, 'req-1');
+
+    // Cross-realm McpError rethrows when rethrowMcpError === true
+    await assert.rejects(
+        () => handle.callTool({ params: { name: 'sync_probe', arguments: { failMcp: true } } }),
+        (err) => err.name === 'McpError' && err.code === -32601
+    );
+
+    // Non-JSON-RPC Error (string code) still converts to structured errorMcpResult
+    const genericRes = await handle.callTool({ params: { name: 'sync_probe', arguments: { failGeneric: true } } });
+    assert.equal(genericRes.isError, true);
+
+    // Singular benchmark/ path is exempt just like plural benchmarks/
+    const vendoredBenchAudit = auditBoilerplateText(
+        'headers = {"Content-Type": "text/event-stream"}',
+        'projects/krusch-cascade-router/benchmark/routellm/RouteLLM/routellm/openai_server.py'
+    );
+    assert.equal(vendoredBenchAudit.data.clean, true);
+});

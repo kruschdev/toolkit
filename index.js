@@ -215,6 +215,7 @@ export {
     okMcpResult,
     errorMcpResult,
     validateToolArgs,
+    registerMcpHandlers,
     createMcpServer
 } from './mcp-server.js';
 

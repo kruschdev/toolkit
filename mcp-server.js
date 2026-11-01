@@ -3,6 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  McpError,
 } from "@modelcontextprotocol/sdk/types.js";
 
 /**
@@ -141,25 +142,24 @@ export function validateToolArgs(toolDef, args = {}) {
 }
 
 /**
- * Creates and starts a standardized MCP Server over stdio (or returns `{ server, normalizedTools }`
- * when `options.connect === false` for unit testing).
+ * Synchronously normalizes MCP tools and registers `ListToolsRequestSchema` and
+ * `CallToolRequestSchema` handlers on an existing MCP `Server` instance.
  *
- * @param {string} name - Name of the MCP server
- * @param {string} version - Version of the server
- * @param {Array} tools - Array of tool definition objects
- * @param {Function} toolHandler - Async function handling tool calls (name, args)
+ * Supports brownfield synchronous server factories while enforcing `INV-STACK-03`
+ * 4-boolean annotations and optional `rethrowMcpError` JSON-RPC protocol propagation.
+ *
+ * @param {object} server - MCP SDK `Server` instance
+ * @param {Array} [tools=[]] - Array of tool definition objects
+ * @param {Function} toolHandler - Async/sync function handling tool calls `(name, args, request)`
  * @param {object} [options={}]
+ * @returns {{ server: object, normalizedTools: Array, listTools: Function, callTool: Function }}
  */
-export async function createMcpServer(name, version, tools = [], toolHandler, options = {}) {
+export function registerMcpHandlers(server, tools = [], toolHandler, options = {}) {
   const normalizedTools = Array.isArray(tools)
     ? tools.map((tool) => defineMcpTool(tool))
     : [];
   const toolMap = new Map(normalizedTools.map((tool) => [tool.name, tool]));
-
-  const server = options.server || new Server(
-    { name, version },
-    { capabilities: { tools: {} } }
-  );
+  const fallbackServerName = String(options.serverName || 'mcp-server');
 
   const listToolsHandler = async () => {
     return { tools: normalizedTools };
@@ -192,7 +192,7 @@ export async function createMcpServer(name, version, tools = [], toolHandler, op
         }
       }
 
-      const result = await toolHandler(toolName, toolArgs);
+      const result = await toolHandler(toolName, toolArgs, request);
 
       if (result && typeof result === 'object' && Array.isArray(result.content)) {
         return result;
@@ -207,22 +207,56 @@ export async function createMcpServer(name, version, tools = [], toolHandler, op
 
       return okMcpResult(toolName, 'Completed', { result: result ?? null });
     } catch (error) {
+      if (
+        options.rethrowMcpError === true &&
+        error &&
+        typeof error === 'object' &&
+        (error instanceof McpError ||
+          error.name === 'McpError' ||
+          (typeof error.code === 'number' && error.code <= -32000))
+      ) {
+        throw error;
+      }
       const code = error?.code ? String(error.code) : 'TOOL_ERROR';
       const msg = error instanceof Error ? error.message : String(error);
-      return errorMcpResult(toolName || name, code, `Error executing tool: ${msg}`);
+      return errorMcpResult(toolName || fallbackServerName, code, `Error executing tool: ${msg}`);
     }
   };
 
   server.setRequestHandler(ListToolsRequestSchema, listToolsHandler);
   server.setRequestHandler(CallToolRequestSchema, callToolHandler);
 
+  return {
+    server,
+    normalizedTools,
+    listTools: listToolsHandler,
+    callTool: callToolHandler,
+  };
+}
+
+/**
+ * Creates and starts a standardized MCP Server over stdio (or returns `{ server, normalizedTools }`
+ * when `options.connect === false` for unit testing).
+ *
+ * @param {string} name - Name of the MCP server
+ * @param {string} version - Version of the server
+ * @param {Array} tools - Array of tool definition objects
+ * @param {Function} toolHandler - Async function handling tool calls (name, args, request)
+ * @param {object} [options={}]
+ */
+export async function createMcpServer(name, version, tools = [], toolHandler, options = {}) {
+  const server = options.server || new Server(
+    { name, version },
+    { capabilities: options.capabilities || { tools: {} } }
+  );
+
+  const handle = registerMcpHandlers(server, tools, toolHandler, {
+    ...options,
+    serverName: name,
+  });
+
   if (options.connect === false) {
-    return {
-      server,
-      normalizedTools,
-      listTools: listToolsHandler,
-      callTool: callToolHandler,
-    };
+    return handle;
   }
 
   const transport = options.transport || new StdioServerTransport();
@@ -243,3 +277,4 @@ export async function createMcpServer(name, version, tools = [], toolHandler, op
 
   return server;
 }
+
