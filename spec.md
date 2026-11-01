@@ -394,4 +394,42 @@ Promotes the 2 empirical Python `CANDIDATE_MEETS_RULE_OF_3` clusters discovered 
     - Standalone release assembly (`python/` synced from `lib-py/`, `.github/workflows/ci.yml`, clean `package-lock.json`, single-commit orphan push to `kruschdev/toolkit`)
     - Companion cross-link in `projects/krusch-stack/README.md` (`kruschdev/krusch-stack`)
 
+---
+
+## 10. Step 8C — Flagship Core Services `LEGO-ADOPT` Migration Batch (`INV-LEGO-27`)
+
+> **STATUS: FROZEN (`2026-10-31T19:33:00-07:00`)** — Extends `@krusch/toolkit/streaming` (`deferHeaders`) and `krusch_toolkit.fastapi_app.sse_event_response` (`passthrough`) with 100%-backward-compatible brownfield transport options and migrates 5 flagship `AGENTS.md` core services (`krusch-ci-sentinel`, `berean`, `krusch-agentic-proxy`, `g-krusch`, `krusch-frontend-mcp`) to `0` `krusch-lego audit` boilerplate findings (`9` findings eliminated across `8` source files, reducing fleet `[LEGO-ADOPT]` from `37` $\rightarrow$ `32`).
+
+- **`INV-LEGO-27` (Deferred-Header MCP SSE, Passthrough OpenAI SSE & Standalone CI Fallback Parity)**:
+  - **Orchestrator Pre-Wire (Additive Toolkit Enhancements — Zero Breaking Changes)**:
+    1. `lib/streaming.js` & `lib/types/streaming.d.ts`:
+       - Adds `deferHeaders?: boolean` (`default: false`) to `sseResponse(res, req, options)`.
+       - When `deferHeaders === false` (default): behavior is 100% byte-identical (`writeSseHeaders` + `retry: <ms>\n\n`).
+       - When `deferHeaders === true`: sets `X-Accel-Buffering: no` via `res.setHeader` without flushing status/headers or writing an initial `retry:` frame so downstream transports (e.g. `@modelcontextprotocol/sdk`'s `SSEServerTransport.start()`) can call `res.writeHead(200, ...)` without `ERR_HTTP_HEADERS_SENT`, while attaching `AbortController` disconnect listeners and unref'd `: ping\n\n` heartbeats (writing heartbeats only once `res.headersSent === true`).
+    2. `lib-py/krusch_toolkit/fastapi_app.py`:
+       - Adds `passthrough: bool = False` (and `heartbeat_comment: str | None = "ping"`) to `sse_event_response`.
+       - When `passthrough=False` (default): behavior is 100% byte-identical (`INV-LEGO-03` structured `event: token` / `event: done` / `event: error` frames).
+       - When `passthrough=True`: yields raw `str | bytes` SSE chunks untouched (for OpenAI `chat.completion.chunk` `data: ...\n\ndata: [DONE]\n\n` streams and upstream `httpx` byte-stream proxies) while preserving `_is_request_disconnected(request)` cancellation, `aclosing(_iterate_sse_source(...))` deterministic upstream socket/generator cleanup, optional `: <heartbeat>\n\n` comment when `heartbeat_comment` is non-empty, and `Cache-Control: no-cache, no-transform` / `Connection: keep-alive` / `X-Accel-Buffering: no` anti-buffering headers.
+
+  - **Disjoint Subagent 1 Files (`krusch-ci-sentinel`)**: `projects/krusch-ci-sentinel/src/mcp_bridge.js`, `projects/krusch-ci-sentinel/test/verifier.test.js`
+    - Eliminates hardcoded host path in `mcp_bridge.js` by resolving `process.env.KRUSCH_CONTEXT_DB_PATH` or relative sibling `../../krusch-context-mcp/.agent/context.db` (plus optional `entry.dbPath` override for hermetic tests).
+    - Loads `openSqliteDb` from sibling `../../../lib/sqlite.js` (`@krusch/toolkit/sqlite`) when available with a standalone CI fallback (`node:sqlite`), closing the handle in `finally` inside `recordContextMemory`.
+
+  - **Disjoint Subagent 2 Files (`berean`)**: `projects/berean/db/pool.js`, `projects/berean/routes/api.js`, `projects/berean/tests/conversations.test.js`
+    - Replaces raw `new pg.Pool(dbConfig)` in `db/pool.js` with `createPgPool(dbConfig, { serviceName: 'berean-db' })` from `@krusch/toolkit/pg` while preserving `export const dbConfig`, `export default pool`, exact `import { DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD } from '../src/config/dbConfig.js'`, and zero `process.env` reads (`ARCH-02`).
+    - Replaces manual `res.writeHead(200, { 'Content-Type': 'text/event-stream', ... })` in `POST /api/ask/stream` (`routes/api.js`) with `sseResponse(res, req, { tool: 'berean.ask_stream' })` from `@krusch/toolkit/streaming`, emitting `{ type: 'meta' | 'chunk' | 'sources' | 'done' | 'error' }` payloads via `stream.send('message', ...)` and terminating with `stream.close()` so `client/dist/app.js` line-based `data: ` parsing remains 100% compatible.
+
+  - **Disjoint Subagent 3 Files (`krusch-agentic-proxy`)**: `projects/krusch-agentic-proxy/src/api_gateway.py`, `projects/krusch-agentic-proxy/src/router.py`, `projects/krusch-agentic-proxy/tests/test_lego_sse.py`
+    - Discovers sibling monorepo `lib-py` via `os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "lib-py"))` (strictly zero hardcoded OS home paths) and imports `from krusch_toolkit.fastapi_app import sse_event_response` with a standalone CI `except ImportError:` fallback (using `aclosing` + anti-buffering headers without literal raw `text/event-stream` boilerplate).
+    - Wraps `_event_generator()` in `_build_sse_response` (`src/api_gateway.py`) and `stream_generator()` in `WaterfallRouter._try_stream` (`src/router.py`) with `sse_event_response(..., passthrough=True, heartbeat_comment="")`, preserving 100% of OpenAI `chat.completion.chunk` wire framing and upstream byte-stream passthrough.
+
+  - **Disjoint Subagent 4 Files (`g-krusch`)**: `projects/g-krusch/src/index.js`, `projects/g-krusch/src/lib/db.js`, `projects/g-krusch/test/hardening.test.js`
+    - Loads `sseResponse` from sibling `../../../lib/streaming.js` / `@krusch/toolkit/streaming` (with standalone CI fallback) in `src/index.js`, wiring `GET /mcp/sse` with `sseResponse(res, req, { deferHeaders: true, retryMs: 0, heartbeatMs: 15000, corsOrigin: false, tool: 'g-krusch.mcp_sse' })` so `SSEServerTransport.start()` owns `res.writeHead(200, ...)` without `ERR_HTTP_HEADERS_SENT` while preserving `GKR-01` & `GKR-07` (`app.get('/mcp/sse', apiLimiter, ...)` and `handlePostMessage(req, res, req.body)`) and zero hardcoded OS home paths (`INV-12`).
+    - Loads `initDb` & `closeDb` from sibling `../../../../lib/db.js` / `@krusch/toolkit/db` (with standalone CI fallback) in `src/lib/db.js`, passing `_DatabaseClass: Database` (`better-sqlite3`) and `busyTimeout: 5000` so WAL/durability pragmas and test exit cleanup remain 100% preserved without modifying `package.json` (`npm ci` safe).
+
+  - **Disjoint Subagent 5 Files (`krusch-frontend-mcp`)**: `projects/krusch-frontend-mcp/src/index.js`, `projects/krusch-frontend-mcp/src/lib/db.js`, `projects/krusch-frontend-mcp/tests/db.test.js`
+    - Loads `createMcpServer` & `defineMcpTool` from sibling `../../../lib/mcp-server.js` / `@krusch/toolkit/mcp` (with standalone CI fallback) in `src/index.js`, normalizing `FRONTEND_TOOL_DEFINITIONS` via `defineMcpTool` and booting stdio via `createMcpServer("krusch-frontend-mcp", VERSION, FRONTEND_TOOL_DEFINITIONS, (name, args) => dispatchFrontendTool({ params: { name, arguments: args } }), { validateArgs: false })` while preserving `VERSION`, `FRONTEND_TOOL_CAPABILITIES`, `FRONTEND_TOOL_DEFINITIONS`, `dispatchFrontendTool`, and live child-process stdio execution (`scripts/evaluate-swarm.js`).
+    - Loads `initDb` & `closeDb` from sibling `../../../../lib/db.js` / `@krusch/toolkit/db` (with standalone CI fallback) in `src/lib/db.js`, passing `_DatabaseClass: Database` (preserving `sqlite-vec` C-extension ABI compatibility, `validateDbPath`, `initDbAsync` mutex serialization, and `resetDbForTest` singleton reset).
+
+
 

@@ -6,6 +6,7 @@ export interface SseResponseOptions {
     corsOrigin?: string | false | null;
     retryMs?: number;
     tool?: string;
+    deferHeaders?: boolean;
 }
 
 export interface SseStreamHandle {

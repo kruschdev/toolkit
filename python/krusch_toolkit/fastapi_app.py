@@ -487,14 +487,15 @@ def sse_event_response(
     request: Any = None,
     *,
     default_event: str = "token",
-    heartbeat_comment: str = "ping",
+    heartbeat_comment: str | None = "ping",
+    passthrough: bool = False,
 ) -> Any:
     """Wrap a sync or async iterable into an INV-LEGO-03 disconnect-aware SSE StreamingResponse."""
     deps = _load_fastapi("sse_event_response")
     StreamingResponse = deps["StreamingResponse"]
-    clean_hb = _sanitize_header_token(heartbeat_comment)
+    clean_hb = _sanitize_header_token(heartbeat_comment) if heartbeat_comment else ""
 
-    async def _stream() -> AsyncIterator[str]:
+    async def _stream() -> AsyncIterator[str | bytes]:
         emitted_done = False
         disconnected = False
         entered_source = False
@@ -512,7 +513,14 @@ def sse_event_response(
                         disconnected = True
                         break
 
-                    if isinstance(item, tuple) and len(item) == 2:
+                    if passthrough:
+                        if isinstance(item, (str, bytes)):
+                            yield item
+                        elif isinstance(item, (bytearray, memoryview)):
+                            yield bytes(item)
+                        else:
+                            yield str(item)
+                    elif isinstance(item, tuple) and len(item) == 2:
                         ev_name, payload = item
                         if str(ev_name) == "done":
                             emitted_done = True
@@ -529,10 +537,14 @@ def sse_event_response(
                         disconnected = True
                         break
 
-            if not disconnected and not emitted_done:
+            if not passthrough and not disconnected and not emitted_done:
                 yield format_sse_frame("done", ok_envelope("sse", "Stream complete", {}))
         except Exception as exc:
-            yield format_sse_frame("error", error_envelope("STREAM_ERROR", str(exc)))
+            if passthrough:
+                err_payload = json.dumps(error_envelope("STREAM_ERROR", str(exc)), ensure_ascii=False)
+                yield f"data: {err_payload}\n\n"
+            else:
+                yield format_sse_frame("error", error_envelope("STREAM_ERROR", str(exc)))
         finally:
             if not entered_source:
                 await _close_sse_source(event_generator)
@@ -546,3 +558,4 @@ def sse_event_response(
             "X-Accel-Buffering": "no",
         },
     )
+

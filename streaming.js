@@ -77,6 +77,7 @@ function writeSseHeaders(res, corsOrigin) {
  * @param {string|false|null} [options.corsOrigin] - Explicit `Access-Control-Allow-Origin` override (preserves middleware CORS if omitted, or defaults standalone responses to `'*'`)
  * @param {number} [options.retryMs=3000] - Client reconnection `retry:` hint in milliseconds
  * @param {string} [options.tool='sse'] - Default `INV-LEGO-01` tool identifier for terminal `done`/`error` events
+ * @param {boolean} [options.deferHeaders=false] - Defer `writeHead`/`flushHeaders` so downstream transports (e.g. MCP `SSEServerTransport`) can emit status/headers without `ERR_HTTP_HEADERS_SENT`
  * @returns {{
  *   signal: AbortSignal,
  *   isClosed: () => boolean,
@@ -87,7 +88,7 @@ function writeSseHeaders(res, corsOrigin) {
  *   close: () => void
  * }}
  */
-export function sseResponse(res, req = null, { heartbeatMs = 15000, corsOrigin = undefined, retryMs = 3000, tool = 'sse' } = {}) {
+export function sseResponse(res, req = null, { heartbeatMs = 15000, corsOrigin = undefined, retryMs = 3000, tool = 'sse', deferHeaders = false } = {}) {
     const defaultTool = String(tool || 'sse');
     const controller = new AbortController();
     let closed = Boolean(
@@ -103,6 +104,11 @@ export function sseResponse(res, req = null, { heartbeatMs = 15000, corsOrigin =
 
     if (closed) {
         controller.abort();
+    } else if (deferHeaders) {
+        if (!res.headersSent && typeof res.setHeader === 'function') {
+            res.setHeader('X-Accel-Buffering', 'no');
+        }
+        res.socket?.setNoDelay?.(true);
     } else {
         writeSseHeaders(res, corsOrigin);
         if (retryMs > 0) {
@@ -156,6 +162,9 @@ export function sseResponse(res, req = null, { heartbeatMs = 15000, corsOrigin =
                     clearHeartbeat();
                     return;
                 }
+                if (deferHeaders && !res.headersSent) {
+                    return;
+                }
                 try {
                     res.write(': ping\n\n');
                 } catch {
@@ -172,6 +181,9 @@ export function sseResponse(res, req = null, { heartbeatMs = 15000, corsOrigin =
             return false;
         }
         try {
+            if (deferHeaders && !res.headersSent) {
+                writeSseHeaders(res, corsOrigin);
+            }
             res.write(formatSseFrame(event, data));
             return true;
         } catch {

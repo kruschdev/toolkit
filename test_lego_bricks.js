@@ -1559,4 +1559,54 @@ test('INV-LEGO-11: Strict TypeScript .d.ts coverage, 1:1 root export parity, and
     }
 });
 
+test('INV-LEGO-27: sseResponse({ deferHeaders: true }) defers writeHead for MCP SSEServerTransport without ERR_HTTP_HEADERS_SENT', async () => {
+    const { EventEmitter } = await import('node:events');
+    const { sseResponse } = await import('./streaming.js');
+
+    const req = new EventEmitter();
+    req.complete = true;
+    const res = new EventEmitter();
+    res.headersSent = false;
+    res.writableEnded = false;
+    const headers = {};
+    const chunks = [];
+    res.setHeader = (k, v) => {
+        if (res.headersSent) throw new Error('ERR_HTTP_HEADERS_SENT');
+        headers[k.toLowerCase()] = v;
+    };
+    res.writeHead = (statusCode, hdrs = {}) => {
+        if (res.headersSent) throw new Error('ERR_HTTP_HEADERS_SENT');
+        res.statusCode = statusCode;
+        for (const [k, v] of Object.entries(hdrs)) {
+            headers[k.toLowerCase()] = v;
+        }
+        res.headersSent = true;
+    };
+    res.write = (chunk) => {
+        res.headersSent = true;
+        chunks.push(String(chunk));
+        return true;
+    };
+    res.end = () => {
+        res.writableEnded = true;
+        res.emit('close');
+    };
+
+    const handle = sseResponse(res, req, { deferHeaders: true, retryMs: 0, heartbeatMs: 20, corsOrigin: false });
+    assert.equal(res.headersSent, false, 'deferHeaders must keep res.headersSent === false before downstream writeHead');
+    assert.equal(headers['x-accel-buffering'], 'no');
+    assert.equal(chunks.length, 0);
+
+    // Downstream SSEServerTransport.start() calls writeHead(200, ...) cleanly
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    res.write('event: endpoint\ndata: /mcp/messages?sessionId=abc\n\n');
+    await new Promise((r) => setTimeout(r, 35));
+    assert.ok(chunks.some((c) => c === ': ping\n\n'), 'Heartbeat must emit after downstream headersSent');
+
+    res.end();
+    assert.equal(handle.isClosed(), true);
+    assert.equal(handle.signal.aborted, true);
+});
+
+
 

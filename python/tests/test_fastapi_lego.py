@@ -771,3 +771,45 @@ def test_brownfield_lifespan_request_health_flatten_and_legacy_detail() -> None:
         assert isinstance(bad_json["detail"], list)
 
     assert lifecycle_events == ["hook_start", "lifespan_enter", "lifespan_exit", "hook_stop"]
+
+
+def test_sse_event_response_passthrough_openai_and_bytes_cleanup() -> None:
+    app = create_fastapi_app(title="OpenAI Proxy SSE")
+    closed_state = {"bytes_closed": False}
+
+    @app.get("/v1/chat/stream")
+    async def openai_stream() -> Any:
+        async def _gen():
+            yield 'data: {"object":"chat.completion.chunk","choices":[{"delta":{"content":"Hi"}}]}\n\n'
+            yield "data: [DONE]\n\n"
+
+        return sse_event_response(_gen(), passthrough=True, heartbeat_comment="")
+
+    @app.get("/v1/proxy/bytes")
+    async def bytes_stream() -> Any:
+        async def _bytes_gen():
+            try:
+                yield b'data: {"chunk":1}\n\n'
+                yield b"data: [DONE]\n\n"
+            finally:
+                closed_state["bytes_closed"] = True
+
+        return sse_event_response(_bytes_gen(), passthrough=True, heartbeat_comment=None)
+
+    with TestClient(app) as client:
+        r1 = client.get("/v1/chat/stream")
+        assert r1.status_code == 200
+        assert r1.headers["content-type"].startswith("text/event-stream")
+        assert r1.headers["X-Accel-Buffering"] == "no"
+        assert r1.headers["Cache-Control"] == "no-cache, no-transform"
+        assert (
+            r1.text
+            == 'data: {"object":"chat.completion.chunk","choices":[{"delta":{"content":"Hi"}}]}\n\ndata: [DONE]\n\n'
+        )
+        assert "event: done" not in r1.text
+
+        r2 = client.get("/v1/proxy/bytes")
+        assert r2.status_code == 200
+        assert r2.text == 'data: {"chunk":1}\n\ndata: [DONE]\n\n'
+        assert closed_state["bytes_closed"] is True
+
