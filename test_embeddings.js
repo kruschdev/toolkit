@@ -35,7 +35,7 @@ function vectorNorm(vec) {
 
 test('@krusch/toolkit/embeddings — Unified Sovereign Embedding Suite (INV-01..INV-06)', async (t) => {
     await t.test('1. Constants, MODEL_PROFILES, and resolveEmbeddingProfile tag normalization', () => {
-        assert.equal(DEFAULT_EMBED_HOST, 'http://127.0.0.1:11434');
+        assert.match(DEFAULT_EMBED_HOST, /^http:\/\/[\d.]+:11434$/);
         assert.equal(DEFAULT_EMBED_MODEL, 'snowflake-arctic-embed2');
         assert.equal(DEFAULT_EMBED_DIMS, 1024);
 

@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { scanTextForLeaks, verifyDirectoryZeroLeaks } from './scripts/verify-zero-leaks.js';
+import fs from 'node:fs';
+import { applyPublicReleaseTransform, scanTextForLeaks, verifyDirectoryZeroLeaks } from './scripts/verify-zero-leaks.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -42,8 +43,14 @@ test('INV-LEGO-26: scanTextForLeaks allows RFC subnet CIDR masks, loopback, RFC 
     assert.deepEqual(findings, []);
 });
 
-test('INV-LEGO-26: entire @krusch/toolkit repository passes verifyDirectoryZeroLeaks with 0 findings', () => {
+test('INV-LEGO-26: entire @krusch/toolkit repository and public release transforms pass with 0 findings', () => {
     const res = verifyDirectoryZeroLeaks(__dirname, { strictRelease: false });
     assert.equal(res.ok, true, res.ok ? '' : JSON.stringify(res.error?.details?.findings, null, 2));
     assert.equal(res.data.findings.length, 0);
+
+    for (const rel of ['embeddings.js', 'trajectory-guard.js']) {
+        const raw = fs.readFileSync(path.join(__dirname, rel), 'utf8');
+        const pub = applyPublicReleaseTransform(raw, rel);
+        assert.deepEqual(scanTextForLeaks(pub, rel, { strictRelease: true }), []);
+    }
 });
