@@ -2811,7 +2811,7 @@ function stripCommentLines(source = '', { isPython = false } = {}) {
 }
 
 const CATALOG_AUDIT_EXEMPT_PATH_RE =
-    /(?:^(?:lib|lib-py)(?:[\\/]|$)|(?:^|[\\/])homelab[\\/](?:lib|lib-py)(?:[\\/]|$)|(?:^|[\\/])(?:krusch_toolkit|krusch-stack|tests?|__tests__|benchmarks?|node_modules)(?:[\\/]|$)|\.(?:test|spec)\.[cm]?[jt]sx?$|(?:^|[\\/])test[_-]|\.(?:md|mdx|txt|rst|json|ya?ml|toml|lock|html|css|svg|sql|sh)$)/i;
+    /(?:^(?:lib|lib-py)(?:[\\/]|$)|(?:^|[\\/])homelab[\\/](?:lib|lib-py)(?:[\\/]|$)|(?:^|[\\/])(?:krusch_toolkit|krusch-stack|tests?|__tests__|benchmarks?|node_modules|site-packages|__pycache__|vendor|third_party|_?archive|archive_scratch|scratch)(?:[\\/]|$)|\.(?:test|spec)\.[cm]?[jt]sx?$|(?:^|[\\/])test[_-]|\.(?:md|mdx|txt|rst|json|ya?ml|toml|lock|html|css|svg|sql|sh)$)/i;
 
 const MAX_AUDIT_CHARS = 1_048_576;
 

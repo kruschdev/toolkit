@@ -88,6 +88,7 @@ export interface ParseBoundedMultipartOptions {
     maxFieldBytes?: number;
     allowedMimeTypes?: Iterable<string> | readonly string[] | ReadonlySet<string> | null;
     requireMagicMatch?: boolean;
+    skipEmptyFiles?: boolean;
     tool?: string;
 }
 

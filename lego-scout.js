@@ -20,7 +20,7 @@ const PORTABLE_PROJECTS_ROOT = '<HOMELAB_ROOT>/projects';
 const NODE_SOURCE_EXTS = new Set(['.js', '.mjs', '.jsx', '.ts', '.tsx']);
 const SCAN_SOURCE_EXTS = new Set(['.js', '.mjs', '.jsx', '.ts', '.tsx', '.py']);
 
-const SKIP_TOP_PROJECTS = new Set(['krusch-stack', 'archive', 'reference']);
+const SKIP_TOP_PROJECTS = new Set(['krusch-stack', 'archive', 'reference', 'vllm', 'lib', 'lib-py', 'scratch']);
 
 const SKIP_SUBDIRECTORIES = new Set([
     'node_modules',
@@ -54,6 +54,8 @@ const SKIP_SUBDIRECTORIES = new Set([
     'third_party',
     'archive',
     '_archive',
+    'archive_scratch',
+    'scratch',
     'reference',
 ]);
 

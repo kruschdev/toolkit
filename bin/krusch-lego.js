@@ -27,7 +27,31 @@ import { scoutHomelabLegoCandidates } from '../lego-scout.js';
 const TOOL_NAME = 'krusch-lego';
 const VALID_RUNTIMES = new Set(['node', 'python', 'react', 'edge']);
 const SCAN_EXTENSIONS = new Set(['.js', '.jsx', '.mjs', '.ts', '.tsx', '.py']);
-const SKIP_DIRECTORIES = new Set(['node_modules', '.git', '.venv', 'dist', 'build', '.next', 'coverage', 'out', 'tests', 'test', '__tests__', 'benchmarks']);
+const SKIP_DIRECTORIES = new Set([
+    'node_modules',
+    '.git',
+    '.venv',
+    'venv',
+    'env',
+    'site-packages',
+    '__pycache__',
+    'dist',
+    'build',
+    '.next',
+    'coverage',
+    'out',
+    'tests',
+    'test',
+    '__tests__',
+    'benchmarks',
+    'benchmark',
+    'vendor',
+    'third_party',
+    'archive',
+    '_archive',
+    'archive_scratch',
+    'scratch'
+]);
 const EXEMPT_TEST_FILE_RE = /(?:\.(?:test|spec)\.[cm]?[jt]sx?$|^test[_-])/i;
 
 function resolveRealPath(targetPath) {
@@ -57,6 +81,15 @@ function isExemptAuditPath(targetPath, { isDirectory = false } = {}) {
     const segments = resolved.split(path.sep).filter(Boolean);
     if (segments.some((seg) => SKIP_DIRECTORIES.has(seg))) {
         return true;
+    }
+    let cursorDir = isDirectory ? resolved : path.dirname(resolved);
+    for (let depth = 0; depth < 8; depth++) {
+        if (fs.existsSync(path.join(cursorDir, 'pyvenv.cfg'))) {
+            return true;
+        }
+        const parent = path.dirname(cursorDir);
+        if (parent === cursorDir) break;
+        cursorDir = parent;
     }
     if (!isDirectory && EXEMPT_TEST_FILE_RE.test(path.basename(resolved))) {
         return true;
@@ -159,6 +192,9 @@ function collectAuditFiles(targetPath) {
         const entries = fs
             .readdirSync(dirPath, { withFileTypes: true })
             .sort((a, b) => a.name.localeCompare(b.name));
+        if (entries.some((d) => d.name === 'pyvenv.cfg')) {
+            return;
+        }
 
         for (const entry of entries) {
             if (entry.isDirectory()) {

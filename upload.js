@@ -1261,6 +1261,7 @@ export async function parseBoundedMultipart(input, options = {}) {
     const safeMaxFieldBytes = resolveNonNegLimit(opts.maxFieldBytes, DEFAULT_MAX_FIELD_BYTES);
     const allowedMimeTypes = opts.allowedMimeTypes ?? null;
     const requireMagicMatch = opts.requireMagicMatch !== false;
+    const skipEmptyFiles = opts.skipEmptyFiles === true;
 
     const rawContentType =
         (typeof opts.contentType === 'string' && opts.contentType) ||
@@ -1409,6 +1410,8 @@ export async function parseBoundedMultipart(input, options = {}) {
     const files = [];
     let fieldCount = 0;
     let fileCount = 0;
+    let skippedEmptyCount = 0;
+    const maxSkippedEmpty = safeMaxFiles + safeMaxFields + 16;
 
     let cursor = partStart;
     while (cursor <= totalBytes) {
@@ -1471,6 +1474,24 @@ export async function parseBoundedMultipart(input, options = {}) {
         const { fieldName, hasFilename, filename: rawFilename, contentType: partContentType } = parsedHeaders;
 
         if (hasFilename) {
+            if (skipEmptyFiles && partBody.byteLength === 0) {
+                skippedEmptyCount += 1;
+                if (skippedEmptyCount > maxSkippedEmpty) {
+                    return errorEnvelope(
+                        'UPLOAD_TOO_MANY_FILES',
+                        `Multipart upload exceeds maximum of ${safeMaxFiles} file(s)`,
+                        { maxFiles: safeMaxFiles },
+                        tool
+                    );
+                }
+                if (suffix.kind === 'close') {
+                    sawClosingBoundary = true;
+                    break;
+                }
+                cursor = suffix.nextOffset;
+                continue;
+            }
+
             fileCount += 1;
             if (fileCount > safeMaxFiles) {
                 return errorEnvelope(

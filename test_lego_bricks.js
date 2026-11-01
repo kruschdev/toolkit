@@ -1662,3 +1662,100 @@ test('INV-LEGO-28: registerMcpHandlers synchronous wiring, cross-realm rethrowMc
     );
     assert.equal(vendoredBenchAudit.data.clean, true);
 });
+
+test('INV-LEGO-29: Scanner exemptions skip site-packages, scratch/archive_scratch, custom pyvenv.cfg virtualenvs, and vllm/lib/scratch top dirs', async () => {
+    const { auditBoilerplateText } = await import('./catalog.js');
+    const { scoutHomelabLegoCandidates } = await import('./lego-scout.js');
+
+    for (const exemptRelPath of [
+        'projects/demo/mcp_env/lib/python3.12/site-packages/starlette/responses.py',
+        'projects/demo/archive_scratch/old_pool.js',
+        'projects/demo/scratch/raw_sse.py',
+        'projects/demo/vendor/sdk/pool.js'
+    ]) {
+        const res = auditBoilerplateText(
+            "import pg from 'pg';\nconst pool = new pg.Pool();\nheaders = {'Content-Type': 'text/event-stream'}\n",
+            exemptRelPath
+        );
+        assert.equal(res.data.clean, true, `Expected ${exemptRelPath} to be exempt in auditBoilerplateText`);
+    }
+
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'lego-inv29-'));
+    try {
+        // 1. Custom virtualenv directory with pyvenv.cfg + scratch/archive_scratch inside a project
+        const projDir = path.join(tmpRoot, 'sample-service');
+        fs.mkdirSync(path.join(projDir, 'src'), { recursive: true });
+        fs.writeFileSync(path.join(projDir, 'src', 'clean.js'), 'export const ok = 1;\n', 'utf8');
+
+        const customVenvPkg = path.join(projDir, 'custom_env', 'pkg');
+        fs.mkdirSync(customVenvPkg, { recursive: true });
+        fs.writeFileSync(path.join(projDir, 'custom_env', 'pyvenv.cfg'), 'home = /usr/bin\n', 'utf8');
+        fs.writeFileSync(path.join(customVenvPkg, 'raw.py'), 'from fastapi import FastAPI\napp = FastAPI()\n', 'utf8');
+
+        fs.mkdirSync(path.join(projDir, 'archive_scratch'), { recursive: true });
+        fs.writeFileSync(path.join(projDir, 'archive_scratch', 'legacy.js'), "import pg from 'pg';\nnew pg.Pool();\n", 'utf8');
+
+        // 2. Top-level vllm, lib, lib-py, scratch directories must be skipped by scoutHomelabLegoCandidates
+        for (const skippedTop of ['vllm', 'lib', 'lib-py', 'scratch']) {
+            fs.mkdirSync(path.join(tmpRoot, skippedTop), { recursive: true });
+            fs.writeFileSync(path.join(tmpRoot, skippedTop, 'raw.js'), "import pg from 'pg';\nnew pg.Pool();\n", 'utf8');
+        }
+
+        const cliAudit = JSON.parse(
+            execFileSync(process.execPath, [path.join(__dirname, 'bin/krusch-lego.js'), 'audit', projDir, '--json'], {
+                encoding: 'utf8'
+            })
+        );
+        assert.equal(cliAudit.ok, true);
+        assert.equal(cliAudit.data.clean, true);
+        assert.equal(cliAudit.data.scannedFiles, 1, 'Only src/clean.js should be scanned; custom_env (pyvenv.cfg) and archive_scratch must be skipped');
+
+        const directVenvAudit = JSON.parse(
+            execFileSync(process.execPath, [path.join(__dirname, 'bin/krusch-lego.js'), 'audit', path.join(projDir, 'custom_env'), '--json'], {
+                encoding: 'utf8'
+            })
+        );
+        assert.equal(directVenvAudit.data.clean, true);
+        assert.equal(directVenvAudit.data.scannedFiles, 0);
+
+        const scoutRes = scoutHomelabLegoCandidates(tmpRoot);
+        assert.equal(scoutRes.ok, true);
+        assert.equal(scoutRes.data.scannedProjects, 1);
+        assert.equal(scoutRes.data.adoptionFindings.length, 0);
+
+        // 3. parseBoundedMultipart skipEmptyFiles option (unselected 0-byte browser file inputs)
+        const { Readable } = await import('node:stream');
+        const { parseBoundedMultipart } = await import('./upload.js');
+        const boundary = '----Inv29Boundary';
+        const multipartBody = Buffer.concat([
+            Buffer.from(
+                `--${boundary}\r\nContent-Disposition: form-data; name="notes"\r\n\r\npanel ok\r\n` +
+                `--${boundary}\r\nContent-Disposition: form-data; name="empty_slot"; filename=""\r\nContent-Type: application/octet-stream\r\n\r\n\r\n` +
+                `--${boundary}\r\nContent-Disposition: form-data; name="photo"; filename="shot.png"\r\nContent-Type: image/png\r\n\r\n`
+            ),
+            Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]),
+            Buffer.from(`\r\n--${boundary}--\r\n`)
+        ]);
+        const makeReq = () =>
+            Object.assign(Readable.from([multipartBody]), {
+                headers: { 'content-type': `multipart/form-data; boundary=${boundary}` }
+            });
+
+        const defaultRejected = await parseBoundedMultipart(makeReq(), { maxFiles: 4 });
+        assert.equal(defaultRejected.ok, false);
+        assert.equal(defaultRejected.error.code, 'UPLOAD_EMPTY');
+
+        const skippedOk = await parseBoundedMultipart(makeReq(), {
+            maxFiles: 4,
+            skipEmptyFiles: true
+        });
+        assert.equal(skippedOk.ok, true);
+        assert.equal(skippedOk.data.fields.notes, 'panel ok');
+        assert.equal(skippedOk.data.files.length, 1);
+        assert.equal(skippedOk.data.files[0].fieldName, 'photo');
+        assert.equal(skippedOk.data.files[0].filename, 'shot.png');
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
