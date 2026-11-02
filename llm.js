@@ -242,6 +242,13 @@ export async function chat(systemPrompt, userMessage, config, options = {}) {
                     apiUrl: resolvedConfig.apiUrl || 'https://api.openai.com/v1/chat/completions',
                 }, options);
                 break;
+            case 'openrouter':
+                result = await chatOpenAICompat(systemPrompt, userMessage, {
+                    ...resolvedConfig,
+                    apiKey: resolvedConfig.apiKey || process.env.OPENROUTER_API_KEY,
+                    apiUrl: resolvedConfig.apiUrl || 'https://openrouter.ai/api/v1/chat/completions',
+                }, options);
+                break;
             case 'xai':
             case 'grok':
                 result = await chatOpenAICompat(systemPrompt, userMessage, resolvedConfig, options);
@@ -253,7 +260,7 @@ export async function chat(systemPrompt, userMessage, config, options = {}) {
                 }, options);
                 break;
             default:
-                throw new Error(`Unknown LLM provider: ${provider}. Supported: gemini, cascade, openai, xai, ollama`);
+                throw new Error(`Unknown LLM provider: ${provider}. Supported: gemini, cascade, openai, openrouter, xai, ollama`);
             }
         }
 
@@ -330,10 +337,12 @@ export function buildGeminiPayload(systemPrompt, userMessage, config, options = 
         ...(!gemini4 && config.temperature != null ? { temperature: config.temperature } : {}),
         maxOutputTokens: resolveMaxOutputTokens(config.model, config, options),
         ...(thinkingLevel ? { thinkingConfig: { thinkingLevel } } : {}),
-        ...(config.responseSchema && {
-            responseMimeType: 'application/json',
-            responseSchema: config.responseSchema
-        }),
+        ...(config.responseSchema
+            ? {
+                responseMimeType: 'application/json',
+                responseSchema: config.responseSchema
+            }
+            : (config.format === 'json' ? { responseMimeType: 'application/json' } : {})),
     };
 
     return {

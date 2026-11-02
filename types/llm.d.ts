@@ -1,4 +1,4 @@
-export type LLMProvider = 'gemini' | 'openai' | 'xai' | 'grok' | 'ollama' | (string & {});
+export type LLMProvider = 'gemini' | 'openai' | 'openrouter' | 'xai' | 'grok' | 'ollama' | (string & {});
 export type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high';
 
 export interface LLMChatMessage {

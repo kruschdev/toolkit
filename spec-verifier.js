@@ -142,15 +142,22 @@ export async function runAuditPass({ specText, files, llmConfig, passNumber = 1 
 Your job is to compare the provided Codebase Files against the Frozen Formal Specification.
 
 Rules:
-1. Every rule, constraint, and architectural invariant in the Spec MUST be strictly upheld by the Code.
-2. If code violates an invariant, introduces architectural drift, or fails to implement a required behavior, report it as a finding.
-3. Be thorough and uncompromising. Do NOT assume intentions; verify concrete implementations.
-4. If there are NO discrepancies or defects whatsoever, return an empty findings array.
+1. First evaluate each applicable rule, constraint, and invariant from the Spec against the provided Codebase Files inside "invariantChecks" ("PASS" or "FAIL" with exact line evidence).
+2. "findings" MUST ONLY contain genuine, concrete violations where an applicable invariant is broken ("FAIL") in the provided files.
+3. NEVER place compliant checks ("PASS"), "no violation detected" notes, or disclaimers about omitted/external files inside "findings".
+4. If there are NO concrete violations in the provided files, "findings" MUST be an empty array [].
 
 Respond in JSON format:
 {
   "passNumber": ${passNumber},
   "summary": "High-level summary of audit observations",
+  "invariantChecks": [
+    {
+      "invariant": "Invariant ID",
+      "status": "PASS" | "FAIL",
+      "evidence": "Brief line-grounded check"
+    }
+  ],
   "findings": [
     {
       "file": "path/to/file.js",
@@ -168,13 +175,15 @@ ${specText}
 ## CODEBASE IMPLEMENTATION UNDER AUDIT
 ${filesPayload}`;
 
-    const result = await chatJson(systemPrompt, userMessage, { ...llmConfig, temperature: 0.1 });
+    const result = await chatJson(systemPrompt, userMessage, { ...llmConfig, temperature: llmConfig?.temperature ?? 0.0 }, { bypassCascade: true });
     const findings = Array.isArray(result?.findings) ? result.findings : [];
 
     return {
         passNumber,
         role: 'primary_auditor',
         isReferee: false,
+        model: llmConfig?.model || 'unknown',
+        provider: llmConfig?.provider || 'unknown',
         summary: result?.summary || "Audit pass completed.",
         findings,
         isClean: findings.length === 0,
@@ -191,25 +200,31 @@ ${filesPayload}`;
  * @param {Array<{path: string, content: string}>} params.files - Codebase files to audit.
  * @param {object} params.llmConfig - LLM configuration for the referee model.
  * @param {number} [params.passNumber=1] - Current audit pass index.
- * @returns {Promise<{ passNumber: number, role: string, isReferee: boolean, summary: string, findings: Array<{file: string, invariant: string, description: string, severity: 'CRITICAL'|'WARNING'|'NIT'}>, isClean: boolean, timestamp: string }>}
+ * @returns {Promise<{ passNumber: number, role: string, isReferee: boolean, model?: string, provider?: string, summary: string, findings: Array<{file: string, invariant: string, description: string, severity: 'CRITICAL'|'WARNING'|'NIT'}>, isClean: boolean, timestamp: string }>}
  */
 export async function runRefereeAuditPass({ specText, files, llmConfig, passNumber = 1 }) {
     const systemPrompt = `You are an Independent Verification Referee (arXiv: 2608.03744 "Agents Catching Agents").
-You are executing an ISOLATED, ZERO-TRUST re-derivation of all specification invariants against raw code files.
+You are executing an ISOLATED, ZERO-TRUST re-derivation of all applicable specification invariants against the provided code files.
 You have NOT been provided with any previous auditor notes or agent reasoning traces to eliminate shortcut contagion.
 
 Rules:
-1. Parse every explicit constraint, invariant, and behavioral guarantee in the Formal Specification.
-2. For each invariant, independently verify line-by-line whether the Codebase Files satisfy it.
-3. If an invariant is broken, missing, or partially implemented, record it with exact file and invariant references.
-4. Do not assume previous passes were correct; you are the ultimate zero-trust sanity check.
-5. If and only if the code completely and flawlessly adheres to all invariants, return an empty findings array.
+1. Parse each applicable constraint and invariant in the Formal Specification and verify line-by-line inside "invariantChecks" ("PASS" or "FAIL") whether the provided Codebase Files satisfy it.
+2. "findings" MUST ONLY contain genuine, concrete defects where status is "FAIL" in the provided files.
+3. NEVER put passing checks ("PASS"), "no violation detected" remarks, or speculative warnings about unshown/external files into "findings".
+4. If and only if the provided files satisfy all applicable invariants, return "findings": [].
 
 Respond in JSON format:
 {
   "passNumber": ${passNumber},
   "role": "independent_referee",
   "summary": "Independent re-derivation summary",
+  "invariantChecks": [
+    {
+      "invariant": "Invariant ID",
+      "status": "PASS" | "FAIL",
+      "evidence": "Brief line-grounded check"
+    }
+  ],
   "findings": [
     {
       "file": "path/to/file.js",
@@ -227,17 +242,134 @@ ${specText}
 ## RAW CODEBASE ARTIFACTS TO INDEPENDENTLY RE-DERIVE
 ${filesPayload}`;
 
-    const result = await chatJson(systemPrompt, userMessage, { ...llmConfig, temperature: 0.0 });
+    const result = await chatJson(systemPrompt, userMessage, { ...llmConfig, temperature: 0.0 }, { bypassCascade: true });
     const findings = Array.isArray(result?.findings) ? result.findings : [];
 
     return {
         passNumber,
         role: 'independent_referee',
         isReferee: true,
+        model: llmConfig?.model || 'unknown',
+        provider: llmConfig?.provider || 'unknown',
         summary: result?.summary || "Independent referee pass completed.",
         findings,
         isClean: findings.length === 0,
         timestamp: new Date().toISOString()
+    };
+}
+
+/**
+ * Default non-stalling 3-Family L0 Referee Pool:
+ * 1. Alibaba Qwen (`qwen3-coder-30b-moe:latest`) — Local Dual-GPU SFT+DPO Auditor trained on homelab conventions (`$0.00`).
+ * 2. Google Gemini (`gemini-3.8-flash`) — Direct Gemini API Referee backed by monthly Google API credits.
+ * 3. DeepSeek (`deepseek/deepseek-v3.2`) — Independent OpenRouter Referee (`~$0.26/M` input).
+ */
+export const DEFAULT_THREE_FAMILY_REFEREE_POOL = Object.freeze([
+    Object.freeze({
+        family: 'Alibaba Qwen',
+        role: 'primary_auditor',
+        isReferee: false,
+        provider: 'ollama',
+        model: 'qwen3-coder-30b-moe:latest',
+        maxTokens: 2560
+    }),
+    Object.freeze({
+        family: 'Google Gemini',
+        role: 'independent_referee',
+        isReferee: true,
+        provider: 'gemini',
+        model: 'gemini-3.8-flash',
+        thinkingLevel: 'low',
+        maxTokens: 4096
+    }),
+    Object.freeze({
+        family: 'DeepSeek',
+        role: 'independent_referee',
+        isReferee: true,
+        provider: 'openrouter',
+        model: 'deepseek/deepseek-v3.2',
+        maxTokens: 2560
+    })
+]);
+
+/**
+ * Executes a concurrent, non-stalling 3-Family L0 Specification Referee audit:
+ * - Pass 1 (Primary Auditor): Local `qwen3-coder-30b-moe:latest` (infrastructure-tuned)
+ * - Pass 2 (Independent Referee #1): Google `gemini-3.8-flash` (`thinkingLevel: 'low'`)
+ * - Pass 3 (Independent Referee #2): OpenRouter `deepseek/deepseek-v3.2` (or custom OpenRouter peer)
+ *
+ * Dispatches all 3 distinct model families concurrently (`Promise.all`), avoiding single-node VRAM swap stalls
+ * while verifying `checkConvergence` (`consecutiveZeroPasses >= requiredZeroPasses`) and zero shortcut contagion.
+ *
+ * @param {object} params
+ * @param {string} params.specText - Frozen specification text.
+ * @param {Array<{path: string, content: string}>} params.files - Target files or diff slices to audit.
+ * @param {string} [params.ollamaUrl] - Base URL or `/v1/chat/completions` endpoint for local Qwen3-30B-MoE.
+ * @param {string} [params.geminiApiKey] - Google Gemini API key (defaults to `process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY`).
+ * @param {string} [params.openRouterApiKey] - OpenRouter API key (defaults to `process.env.OPENROUTER_API_KEY`).
+ * @param {string} [params.openRouterModel] - Optional override for the 3rd-family OpenRouter referee model.
+ * @param {Array<object>} [params.pool] - Optional custom pool override.
+ * @param {number} [params.requiredZeroPasses=2] - Required consecutive zero-finding passes (`default: 2`).
+ * @returns {Promise<{ isConverged: boolean, consecutiveZeroPasses: number, hasContagion: boolean, passes: Array<object>, consensus: Array<object>, elapsedMs: number }>}
+ */
+export async function runThreeFamilyRefereeAudit({
+    specText,
+    files,
+    ollamaUrl,
+    geminiApiKey,
+    openRouterApiKey,
+    openRouterModel,
+    pool = DEFAULT_THREE_FAMILY_REFEREE_POOL,
+    requiredZeroPasses = 2
+}) {
+    const t0 = Date.now();
+    const rawOllama = ollamaUrl || process.env.OLLAMA_AUDITOR_URL || process.env.OLLAMA_BG_URL || process.env.OLLAMA_URL || 'http://localhost:11434';
+    const resolvedOllamaChatUrl = rawOllama.endsWith('/v1/chat/completions')
+        ? rawOllama
+        : `${rawOllama.replace(/\/+$/, '')}/v1/chat/completions`;
+
+    const resolvedPool = pool.map((entry, idx) => {
+        const llmConfig = {
+            provider: entry.provider,
+            model: entry.provider === 'openrouter' && openRouterModel ? openRouterModel : entry.model,
+            maxTokens: entry.maxTokens || 2048,
+            ...(entry.thinkingLevel ? { thinkingLevel: entry.thinkingLevel } : {})
+        };
+        if (entry.provider === 'ollama') {
+            llmConfig.apiUrl = entry.apiUrl || resolvedOllamaChatUrl;
+        } else if (entry.provider === 'gemini') {
+            llmConfig.apiKey = entry.apiKey || geminiApiKey || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+        } else if (entry.provider === 'openrouter') {
+            llmConfig.apiKey = entry.apiKey || openRouterApiKey || process.env.OPENROUTER_API_KEY;
+            llmConfig.apiUrl = entry.apiUrl || 'https://openrouter.ai/api/v1/chat/completions';
+        }
+        return { ...entry, passNumber: idx + 1, llmConfig };
+    });
+
+    const passes = await Promise.all(
+        resolvedPool.map(entry =>
+            entry.isReferee
+                ? runRefereeAuditPass({ specText, files, llmConfig: entry.llmConfig, passNumber: entry.passNumber })
+                : runAuditPass({ specText, files, llmConfig: entry.llmConfig, passNumber: entry.passNumber })
+        )
+    );
+
+    const primary = passes.find(p => !p.isReferee) || passes[0];
+    const referees = passes.filter(p => p !== primary);
+    const consensus = referees.map(ref => ({
+        refereeModel: ref.model,
+        ...evaluateRefereeConsensus(primary.findings, ref.findings)
+    }));
+    const hasContagion = consensus.some(c => c.hasContagion);
+    const conv = checkConvergence(passes, requiredZeroPasses);
+
+    return {
+        isConverged: conv.isConverged && !hasContagion,
+        consecutiveZeroPasses: conv.consecutiveZeroPasses,
+        hasContagion,
+        passes,
+        consensus,
+        elapsedMs: Date.now() - t0
     };
 }
 

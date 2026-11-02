@@ -1,1 +1,1 @@
-export { checkConvergence, createSpecAuditRunner, evaluateDualTrackRefinement, evaluateRefereeConsensus, runAuditPass, runRefereeAuditPass, synthesizeExecutableContract } from "./research.js";
+export { checkConvergence, createSpecAuditRunner, DEFAULT_THREE_FAMILY_REFEREE_POOL, evaluateDualTrackRefinement, evaluateRefereeConsensus, runAuditPass, runRefereeAuditPass, runThreeFamilyRefereeAudit, synthesizeExecutableContract } from "./research.js";

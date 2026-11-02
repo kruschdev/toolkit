@@ -70,7 +70,7 @@ export { applyWaste, round2, contractorCost, customerPrice, calcDualPricing, fin
 export { prunePreRetrieval, prunePostRetrieval, prunePreSynthesis, createContextPruner, shouldActivateMemory, createKnowledgeBoundaryRouter } from './prune.js';
 
 // Specification-First Convergence & Test-Driven Reasoning Engine (arXiv: 2608.12440 / 2608.03744 / 2608.16742)
-export { checkConvergence, runAuditPass, runRefereeAuditPass, evaluateRefereeConsensus, createSpecAuditRunner, synthesizeExecutableContract, evaluateDualTrackRefinement } from './spec-verifier.js';
+export { checkConvergence, runAuditPass, runRefereeAuditPass, evaluateRefereeConsensus, createSpecAuditRunner, DEFAULT_THREE_FAMILY_REFEREE_POOL, runThreeFamilyRefereeAudit, synthesizeExecutableContract, evaluateDualTrackRefinement } from './spec-verifier.js';
 
 // Knowledge Invalidation & Artifact-Anchored Verification EA-Graph (MobileMem 2608.13606 / EA-Graph 2608.04278)
 export { MemoryInvalidationEngine, filterActiveMemories, supersedeMemoryRecord, buildMemoryLineage, ArtifactVerificationGraph, anchorVerificationClaim, checkArtifactDrift, computeArtifactHash } from './memory-invalidation.js';

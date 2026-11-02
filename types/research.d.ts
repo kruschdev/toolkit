@@ -759,6 +759,34 @@ export declare function runRefereeAuditPass(params: {
 
 export declare function createSpecAuditRunner(options?: Record<string, any>): Record<string, any>;
 
+export declare const DEFAULT_THREE_FAMILY_REFEREE_POOL: ReadonlyArray<{
+    readonly family: string;
+    readonly role: string;
+    readonly isReferee: boolean;
+    readonly provider: string;
+    readonly model: string;
+    readonly thinkingLevel?: string;
+    readonly maxTokens: number;
+}>;
+
+export declare function runThreeFamilyRefereeAudit(params: {
+    specText: string;
+    files: ReadonlyArray<{ path: string; content: string }>;
+    ollamaUrl?: string;
+    geminiApiKey?: string;
+    openRouterApiKey?: string;
+    openRouterModel?: string;
+    pool?: ReadonlyArray<Record<string, any>>;
+    requiredZeroPasses?: number;
+}): Promise<{
+    isConverged: boolean;
+    consecutiveZeroPasses: number;
+    hasContagion: boolean;
+    passes: Array<Record<string, any>>;
+    consensus: Array<Record<string, any>>;
+    elapsedMs: number;
+}>;
+
 export declare function synthesizeExecutableContract(params: {
     specText: string;
     targetModule: string;

@@ -144,6 +144,8 @@ export {
     runRefereeAuditPass,
     evaluateRefereeConsensus,
     createSpecAuditRunner,
+    DEFAULT_THREE_FAMILY_REFEREE_POOL,
+    runThreeFamilyRefereeAudit,
     synthesizeExecutableContract,
     evaluateDualTrackRefinement
 } from './spec-verifier.js';
