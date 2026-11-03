@@ -1759,3 +1759,42 @@ test('INV-LEGO-29: Scanner exemptions skip site-packages, scratch/archive_scratc
     }
 });
 
+test('scoreLegoBrickCoverage computes sealed brick ratio, slop breaker status, and audit token savings', async () => {
+    const { scoreLegoBrickCoverage } = await import('./index.js');
+
+    // 1. Legacy slop bundle (0 sealed bricks, 2 slop findings -> 0% sealed, breakerTripped: true)
+    const legacyRes = scoreLegoBrickCoverage([
+        {
+            filePath: 'src/db.js',
+            code: "import pg from 'pg';\nexport const pool = new pg.Pool();\n"
+        },
+        {
+            filePath: 'src/webhooks.js',
+            code: "import crypto from 'node:crypto';\nexport function check(req, secret) {\n  const sig = req.headers['stripe-signature'];\n  return crypto.createHmac('sha256', secret).update(req.body).digest('hex') === sig;\n}\n"
+        }
+    ]);
+    assert.equal(legacyRes.ok, true);
+    assert.equal(legacyRes.data.scannedFiles, 2);
+    assert.equal(legacyRes.data.sealedTouchpoints, 0);
+    assert.equal(legacyRes.data.slopFindingCount, 2);
+    assert.equal(legacyRes.data.sealedCoverageRatio, 0);
+    assert.equal(legacyRes.data.breakerTripped, true);
+    assert.deepEqual(legacyRes.data.recommendedBrickIds, ['pg', 'webhooks']);
+
+    // 2. Sealed Lego bundle (Node + Python, commented-out import ignored -> 100% sealed, breakerTripped: false)
+    const sealedRes = scoreLegoBrickCoverage({
+        'src/db.js': "// import { safeFetch } from '@krusch/toolkit/security';\nimport { createPgPool } from '@krusch/toolkit/pg';\nexport const pool = createPgPool();\n",
+        'src/webhooks.js': "import { verifyStripeSignature } from '@krusch/toolkit/webhooks';\nexport { verifyStripeSignature };\n",
+        'services/api.py': "from krusch_toolkit import fastapi_app\napp = fastapi_app.create_fastapi_app('billing')\n"
+    });
+    assert.equal(sealedRes.ok, true);
+    assert.equal(sealedRes.data.sealedFiles, 3);
+    assert.equal(sealedRes.data.sealedTouchpoints, 3);
+    assert.deepEqual(sealedRes.data.sealedBrickIds, ['fastapi_app', 'pg', 'webhooks']);
+    assert.equal(sealedRes.data.slopFindingCount, 0);
+    assert.equal(sealedRes.data.sealedCoverageRatio, 1);
+    assert.equal(sealedRes.data.breakerTripped, false);
+    assert.equal(sealedRes.data.estimatedAuditTokensSaved, 2550);
+});
+
+

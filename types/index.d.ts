@@ -442,7 +442,8 @@ export {
     getLegoBrick,
     listArchetypes,
     getArchetype,
-    auditBoilerplateText
+    auditBoilerplateText,
+    scoreLegoBrickCoverage
 } from './catalog.js';
 export type {
     LegoRuntime,
@@ -450,7 +451,11 @@ export type {
     ProjectArchetypeRenderOptions,
     ProjectArchetype,
     BoilerplateFinding,
-    BoilerplateAuditData
+    BoilerplateAuditData,
+    LegoCoverageFileEntry,
+    ScoreLegoBrickCoverageOptions,
+    BoilerplateFileFinding,
+    LegoBrickCoverageData
 } from './catalog.js';
 
 // Lego Web-Standards Edge Router, SSE & KV Store Bricks (@krusch/toolkit/edge)

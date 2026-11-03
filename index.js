@@ -237,7 +237,8 @@ export {
     getLegoBrick,
     listArchetypes,
     getArchetype,
-    auditBoilerplateText
+    auditBoilerplateText,
+    scoreLegoBrickCoverage
 } from './catalog.js';
 
 // Lego Web-Standards Edge Router, SSE & KV Store Bricks (@krusch/toolkit/edge)

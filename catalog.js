@@ -3412,3 +3412,152 @@ function hasUnsafeYamlLoad(cleaned, isPython) {
     }
     return false;
 }
+
+function detectSealedBrickIdsForSource(cleaned, isPython) {
+    const matchedIds = new Set();
+    for (const brick of RUNTIME_BRICKS) {
+        const imp = brick.importPath;
+        if (imp.startsWith('@krusch/toolkit/')) {
+            if (isPython) continue;
+            const escaped = imp.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            if (new RegExp(`['"]${escaped}['"]`).test(cleaned)) {
+                matchedIds.add(brick.id);
+                continue;
+            }
+            if (brick.id === 'mcp' && /['"]@krusch\/toolkit\/mcp-server['"]/.test(cleaned)) {
+                matchedIds.add(brick.id);
+            }
+        } else if (imp.startsWith('krusch_toolkit.')) {
+            if (!isPython) continue;
+            const submod = imp.slice('krusch_toolkit.'.length).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const directRe = new RegExp(`\\bkrusch_toolkit\\.${submod}\\b`);
+            const fromRe = new RegExp(`\\bfrom\\s+krusch_toolkit\\s+import\\b[^\\n]*\\b${submod}\\b`);
+            if (directRe.test(cleaned) || fromRe.test(cleaned)) {
+                matchedIds.add(brick.id);
+            }
+        }
+    }
+    return [...matchedIds].sort();
+}
+
+/**
+ * Compute deterministic Sealed Lego Brick coverage vs. unsealed boilerplate slop
+ * across a file list or `{ [filePath]: code }` map, including estimated downstream
+ * agent audit-token compression (`tokensPerSealedBrick`, default `850`).
+ *
+ * @param {Array<{ filePath?: string, code?: string }> | Record<string, string>} [files=[]]
+ * @param {{ tokensPerSealedBrick?: number }} [options={}]
+ * @returns {{
+ *   ok: boolean,
+ *   tool: string,
+ *   summary: string,
+ *   data: {
+ *     scannedFiles: number,
+ *     cleanFiles: number,
+ *     flaggedFiles: number,
+ *     sealedFiles: number,
+ *     sealedBrickIds: string[],
+ *     sealedTouchpoints: number,
+ *     slopFindingCount: number,
+ *     recommendedBrickIds: string[],
+ *     sealedCoverageRatio: number,
+ *     breakerTripped: boolean,
+ *     estimatedAuditTokensSaved: number,
+ *     findings: Array<{ filePath: string, ruleId: string, brickId: string, importPath: string, severity: string, message: string }>
+ *   }
+ * }}
+ */
+export function scoreLegoBrickCoverage(files = [], options = {}) {
+    const rawTokensPerBrick = Number(options?.tokensPerSealedBrick);
+    const tokensPerBrick =
+        Number.isFinite(rawTokensPerBrick) && rawTokensPerBrick >= 0 ? Math.round(rawTokensPerBrick) : 850;
+
+    let normalizedEntries = [];
+    if (Array.isArray(files)) {
+        normalizedEntries = files.map((item) => ({
+            filePath: String(item?.filePath ?? ''),
+            code: String(item?.code ?? '')
+        }));
+    } else if (files && typeof files === 'object') {
+        normalizedEntries = Object.entries(files).map(([filePath, code]) => ({
+            filePath: String(filePath),
+            code: String(code ?? '')
+        }));
+    }
+
+    let cleanFiles = 0;
+    let flaggedFiles = 0;
+    let sealedFiles = 0;
+    let sealedTouchpoints = 0;
+    const allSealedIds = new Set();
+    const recommendedIds = new Set();
+    const findings = [];
+
+    for (const entry of normalizedEntries) {
+        const fullRaw = entry.code;
+        const raw = fullRaw.length > MAX_AUDIT_CHARS ? fullRaw.slice(0, MAX_AUDIT_CHARS) : fullRaw;
+        const normalizedPath = entry.filePath;
+        const isExempt = Boolean(normalizedPath && CATALOG_AUDIT_EXEMPT_PATH_RE.test(normalizedPath));
+
+        if (!isExempt) {
+            const isPython = inferIsPythonSource(raw, normalizedPath);
+            const cleaned = stripCommentLines(raw, { isPython });
+            const brickIds = detectSealedBrickIdsForSource(cleaned, isPython);
+            if (brickIds.length > 0) {
+                sealedFiles += 1;
+                sealedTouchpoints += brickIds.length;
+                for (const id of brickIds) {
+                    allSealedIds.add(id);
+                }
+            }
+        }
+
+        const report = auditBoilerplateText(raw, normalizedPath);
+        if (report.data.clean) {
+            cleanFiles += 1;
+        } else {
+            flaggedFiles += 1;
+            for (const item of report.data.findings) {
+                if (item.brickId) {
+                    recommendedIds.add(item.brickId);
+                }
+                findings.push({
+                    filePath: normalizedPath,
+                    ...item
+                });
+            }
+        }
+    }
+
+    const slopFindingCount = findings.length;
+    const totalTouchpoints = sealedTouchpoints + slopFindingCount;
+    const sealedCoverageRatio =
+        totalTouchpoints === 0 ? 1 : Number((sealedTouchpoints / totalTouchpoints).toFixed(4));
+    const breakerTripped = slopFindingCount > 0;
+    const estimatedAuditTokensSaved = sealedTouchpoints * tokensPerBrick;
+    const pct = Math.round(sealedCoverageRatio * 100);
+    const summary = breakerTripped
+        ? `Breaker tripped: ${slopFindingCount} slop finding(s) across ${flaggedFiles}/${normalizedEntries.length} file(s) (${pct}% sealed brick coverage)`
+        : `Clean pass: ${pct}% sealed brick coverage across ${normalizedEntries.length} file(s) (${sealedTouchpoints} sealed brick import(s), ~${estimatedAuditTokensSaved} audit tokens saved)`;
+
+    return {
+        ok: true,
+        tool: 'lego.catalog',
+        summary,
+        data: {
+            scannedFiles: normalizedEntries.length,
+            cleanFiles,
+            flaggedFiles,
+            sealedFiles,
+            sealedBrickIds: [...allSealedIds].sort(),
+            sealedTouchpoints,
+            slopFindingCount,
+            recommendedBrickIds: [...recommendedIds].sort(),
+            sealedCoverageRatio,
+            breakerTripped,
+            estimatedAuditTokensSaved,
+            findings
+        }
+    };
+}
+

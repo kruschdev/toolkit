@@ -58,3 +58,37 @@ export declare function auditBoilerplateText(
     code?: string,
     filePath?: string
 ): OkEnvelope<BoilerplateAuditData>;
+
+export interface LegoCoverageFileEntry {
+    filePath?: string;
+    code?: string;
+}
+
+export interface ScoreLegoBrickCoverageOptions {
+    tokensPerSealedBrick?: number;
+}
+
+export interface BoilerplateFileFinding extends BoilerplateFinding {
+    filePath: string;
+}
+
+export interface LegoBrickCoverageData {
+    scannedFiles: number;
+    cleanFiles: number;
+    flaggedFiles: number;
+    sealedFiles: number;
+    sealedBrickIds: string[];
+    sealedTouchpoints: number;
+    slopFindingCount: number;
+    recommendedBrickIds: string[];
+    sealedCoverageRatio: number;
+    breakerTripped: boolean;
+    estimatedAuditTokensSaved: number;
+    findings: BoilerplateFileFinding[];
+}
+
+export declare function scoreLegoBrickCoverage(
+    files?: LegoCoverageFileEntry[] | Record<string, string>,
+    options?: ScoreLegoBrickCoverageOptions
+): OkEnvelope<LegoBrickCoverageData>;
+
