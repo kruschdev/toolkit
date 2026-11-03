@@ -3,19 +3,19 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-cyan.svg)](LICENSE)
 [![Node.js >= 22](https://img.shields.io/badge/node-%3E%3D22.0.0-brightgreen.svg)](https://nodejs.org)
 [![Python >= 3.11](https://img.shields.io/badge/python-%3E%3D3.11-blue.svg)](https://www.python.org)
-[![Bricks: 35 Runtime + 7 Blueprints](https://img.shields.io/badge/Lego%20Bricks-35%20Runtime%20%2B%207%20Blueprints-blueviolet.svg)](#2--core-infrastructure--application-lego-bricks-v170--full-dts-typescript-coverage)
+[![Bricks: 39 Runtime + 7 Blueprints](https://img.shields.io/badge/Lego%20Bricks-39%20Runtime%20%2B%207%20Blueprints-blueviolet.svg)](#2--core-infrastructure--application-lego-bricks-v180--full-dts-typescript-coverage)
 
-**The Unified Application Runtime Lego Suite (`@krusch/toolkit` v1.7.0 for Node.js / TypeScript / Cloudflare Workers + `krusch_toolkit` v1.6.0 for Python 3.11+).**
+**The Unified Application Runtime Lego Suite (`@krusch/toolkit` v1.8.0 for Node.js / TypeScript / Cloudflare Workers + `krusch_toolkit` v1.6.0 for Python 3.11+).**
 
-`@krusch/toolkit` unifies zero-boilerplate HTTP/SSE/MCP servers, DNS-rebinding-safe SSRF guards, YAML 1.2 & schema validators, `node:sqlite` FTS5/RRF & `pgvector` wrappers, SQLAlchemy WAL/async pools, air-gapped Streamlit shells, multi-tier LLM cascade routing, and research-backed agentic governance bricks under a deterministic `{ ok, tool, summary, data | error }` envelope contract (`INV-LEGO-01`).
+`@krusch/toolkit` unifies zero-boilerplate HTTP/SSE/MCP servers, DNS-rebinding-safe SSRF guards, atomic `Idempotency-Key` locks, SHA-256 hash-chained compliance audit ledgers, deny-by-default RBAC & multi-tenant IDOR guards, HMAC-signed keyset cursors, YAML 1.2 & schema validators, `node:sqlite` FTS5/RRF & `pgvector` wrappers, SQLAlchemy WAL/async pools, air-gapped Streamlit shells, multi-tier LLM cascade routing, and research-backed agentic governance bricks under a deterministic `{ ok, tool, summary, data | error }` envelope contract (`INV-LEGO-01`).
 
-> 🔗 **Companion Coding Agent Control Plane**: Pair `@krusch/toolkit` (the *Application Runtime Plane* imported inside the services you build) with **[`krusch-stack`](https://github.com/kruschdev/krusch-stack)** (the *39-tool MCP Coding Agent Control Plane* for Claude Code, Cursor, Windsurf, and Antigravity). `krusch-stack` stamps starter templates backed by `@krusch/toolkit` and audits diffs against `INV-LEGO-01..26` so agents assemble apps from verified bricks rather than hand-rolling boilerplate.
+> 🔗 **Companion Coding Agent Control Plane**: Pair `@krusch/toolkit` (the *Application Runtime Plane* imported inside the services you build) with **[`krusch-stack`](https://github.com/kruschdev/krusch-stack)** (the *39-tool MCP Coding Agent Control Plane* for Claude Code, Cursor, Windsurf, and Antigravity). `krusch-stack` stamps starter templates backed by `@krusch/toolkit` and audits diffs against `INV-LEGO-01..34` so agents assemble apps from verified bricks rather than hand-rolling boilerplate.
 
 ---
 
 ## ⚡ Quick Start
 
-### Node.js / TypeScript (`@krusch/toolkit` v1.7.0)
+### Node.js / TypeScript (`@krusch/toolkit` v1.8.0)
 
 ```bash
 git clone https://github.com/kruschdev/toolkit.git
@@ -57,7 +57,7 @@ pytest python/tests -q
 
 ---
 
-### 2. 🧰 Core Infrastructure & Application Lego Bricks (`v1.7.0` — Full `.d.ts` TypeScript Coverage)
+### 2. 🧰 Core Infrastructure & Application Lego Bricks (`v1.8.0` — Full `.d.ts` TypeScript Coverage)
 
 Every subpath export ships strict `.d.ts` declarations (`./types/*.d.ts`) compatible with `moduleResolution: "NodeNext"` and zero-build Node 22 TypeScript (`node --experimental-strip-types`).
 
@@ -69,6 +69,10 @@ Every subpath export ships strict `.d.ts` declarations (`./types/*.d.ts`) compat
 | `@krusch/toolkit/pg` | `createPgPool`, `runSqlMigrations`, `pgVectorSearch`, `buildPgConnectionString`, `assertSafePgIdentifier` | Retry-guarded PostgreSQL pool, transactional `schema_migrations` runner, and 1024-dim `snowflake-arctic-embed2` `<=>` cosine search. |
 | `@krusch/toolkit/sqlite` | `openSqliteDb`, `escapeFts5Query`, `fuseRrfResults`, `DatabaseSync`, `isSqliteCorruptionError` | Zero-native-addon `node:sqlite` WAL factory (`BEGIN IMMEDIATE` + nested `SAVEPOINT`), deterministic FTS5 query escaper, and Weighted Reciprocal Rank Fusion (`INV-LEGO-12`). |
 | `@krusch/toolkit/security` | `isPrivateOrReservedIp`, `validateOutboundUrl`, `safeFetch`, `createRateLimiter` | DNS-rebinding-safe outbound SSRF guard (connect-time `undici` IP check + manual redirect re-validation) and bounded memory-safe `429` rate limiter (`INV-LEGO-13`). |
+| `@krusch/toolkit/idempotency` | `createIdempotencyStore`, `withIdempotency`, `createIdempotencyMiddleware`, `computePayloadFingerprint`, `normalizeIdempotencyKey` | Atomic `Idempotency-Key` in-flight lock (`409`), SHA-256 payload-mismatch guard (`422`), fencing tokens, and tenant-scoped replay middleware (`INV-LEGO-31`). |
+| `@krusch/toolkit/audit-log` | `createAuditLog`, `verifyAuditChain`, `computeAuditEntryHash`, `canonicalizeAuditPayload`, `GENESIS_AUDIT_HASH` | Tamper-evident SHA-256 / HMAC hash-chained compliance ledger with canonical JSON serialization and SQLite `BEFORE UPDATE/DELETE` immutability triggers (`INV-LEGO-32`). |
+| `@krusch/toolkit/rbac` | `createRbacPolicy`, `evaluateAccess`, `assertTenantOwnership`, `createRbacGuard`, `matchPermissionPattern` | Zero-`node:*` deny-by-default role inheritance & scoped permission evaluator with explicit-deny precedence and OWASP A01 multi-tenant IDOR guards (`INV-LEGO-33`). |
+| `@krusch/toolkit/pagination` | `clampPageLimit`, `encodeCursor`, `decodeCursor`, `buildKeysetPage`, `paginateItems` | Constant-time HMAC-SHA256 tamper-signed base64url keyset cursor encoder/decoder with scope/TTL binding and bounded page-limit clamps (`INV-LEGO-34`). |
 | `@krusch/toolkit/schema` | `s`, `toJsonSchema`, `validateSchema`, `validatePayload`, `createSchemaMiddleware` | Zero-`node:*` composable schema builder, Zod/JSON-Schema adapter, MCP `inputSchema` compiler, and prototype-safe validation middleware (`INV-LEGO-17`). |
 | `@krusch/toolkit/yaml` | `DEFAULT_YAML_LIMITS`, `parseSafeYaml`, `stringifySafeYaml`, `validateYamlConfig`, `loadSafeYamlPack` | Zero-dependency, zero-`node:*` isomorphic YAML 1.2 Core parser/serializer with alias-bomb & tag guards, schema validation, and SHA-256 pack loading (`INV-LEGO-23`). |
 | `@krusch/toolkit/upload` | `sanitizeUploadFilename`, `sniffMimeMagic`, `verifyUploadMime`, `parseBoundedMultipart` | Stream-draining $O(N)$ `multipart/form-data` parser with pre-buffer byte ceilings, path-traversal filename sanitizer, and magic-byte MIME guard (`INV-LEGO-18`). |
@@ -79,7 +83,7 @@ Every subpath export ships strict `.d.ts` declarations (`./types/*.d.ts`) compat
 | `@krusch/toolkit/edge` | `createEdgeRouter`, `edgeSseResponse`, `createEdgeKvJsonStore`, `readBoundedEdgeJson`, `edgeCorsHeaders`, `edgeOkResponse`, `edgeErrorResponse` | Zero-`node:*` Web-Standards router, `413` body guard, SSE stream, and KV store for Cloudflare Workers and edge runtimes (`INV-LEGO-08`). |
 | `@krusch/toolkit/webhooks` | `constantTimeEqual`, `signWebhookHmac`, `verifySlackSignature`, `verifyGithubSignature`, `verifyStripeSignature`, `verifyBearerToken` | Constant-time HMAC-SHA256 webhook signature verifiers (Slack, GitHub, Stripe) with replay protection and SHA-256 Bearer auth (`INV-LEGO-09`). |
 | `@krusch/toolkit/cli` | `withSingleInstanceLock`, `attachDaemonSignals`, `appendJsonlRecord`, `defineCli` | Atomic `wx` PID/nonce single-instance cron lockfile guard, daemon signal teardown, NDJSON telemetry appender, and `--json` CLI builder (`INV-LEGO-10`). |
-| `@krusch/toolkit/catalog` | `RUNTIME_BRICKS`, `PROJECT_ARCHETYPES`, `listLegoBricks`, `listArchetypes`, `auditBoilerplateText` | Machine-readable catalog of 35 runtime bricks, 7 zero-LLM project blueprints, and static boilerplate-reinvention detector (`krusch-lego` CLI). |
+| `@krusch/toolkit/catalog` | `RUNTIME_BRICKS`, `PROJECT_ARCHETYPES`, `listLegoBricks`, `listArchetypes`, `auditBoilerplateText`, `scoreLegoBrickCoverage` | Machine-readable catalog of 39 runtime bricks, 7 zero-LLM project blueprints, and static boilerplate-reinvention detector (`krusch-lego` CLI). |
 | `@krusch/toolkit/scaffold` | `scaffoldProject` | Deterministic `<50ms` zero-LLM blueprint stamper (`node-api-sqlite`, `node-ts-service`, `node-rag-pgvector`, `mcp-stdio-server`, `fullstack-react-vite`, `python-fastapi-service`, `cloudflare-worker`). |
 | `@krusch/toolkit/embeddings` | `embed`, `embedBatch`, `embedChunkedCentroid`, `createEmbeddings`, `formatEmbeddingInput`, `calibrateQuerySimilarity` | Asymmetric query/document 1024-dim `snowflake-arctic-embed2` embedding client with batch `/api/embed` fallback and L2 centroid pooling. |
 | `@krusch/toolkit/llm` | `chat`, `chatJson`, `resolveModelConfig`, `resolveGeminiToolConfig`, `isGemini4Model`, `normalizeThinkingLevel`, `resolveMaxOutputTokens`, `buildGeminiPayload`, `extractGeminiTextParts` | Multi-provider unified LLM client (`gemini-4-argon` & `gemini-3.8-flash` with multi-hop `CONTINUATION`, `thinkingLevel`, and automatic tool-less `functionCallingConfig: { mode: 'NONE' }`, OpenRouter, xAI Grok, Ollama, and optional [`krusch-cascade-router`](https://github.com/kruschdev/krusch-cascade-router)). |
@@ -131,7 +135,7 @@ All Python Lego bricks import cleanly in bare Python 3.11+ stdlib (lazy-loading 
 ## 🛠️ Zero-LLM Blueprint & Rule-of-3 Scout CLI (`krusch-lego`)
 
 ```bash
-# List all 35 runtime Lego bricks + 7 starter blueprints (node | python | react | edge)
+# List all 39 runtime Lego bricks + 7 starter blueprints (node | python | react | edge)
 node ./bin/krusch-lego.js list
 
 # Inspect exact import & usage snippet for a brick

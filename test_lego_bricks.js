@@ -310,7 +310,7 @@ test('INV-LEGO-01 & INV-LEGO-04: @krusch/toolkit/catalog, scaffoldProject, and k
     const { listLegoBricks, listArchetypes, auditBoilerplateText } = await import('./catalog.js');
     const { scaffoldProject } = await import('./scaffold.js');
 
-    assert.equal(listLegoBricks().length, 35);
+    assert.equal(listLegoBricks().length, 39);
     assert.equal(listLegoBricks({ runtime: 'edge' }).length, 1);
     const archetypes = listArchetypes();
     assert.equal(archetypes.length, 7);
@@ -1500,7 +1500,7 @@ test('INV-LEGO-11: Strict TypeScript .d.ts coverage, 1:1 root export parity, and
     assert.ok(runtimeKeys.length >= 225, `Expected >=225 root exports, got ${runtimeKeys.length}`);
 
     const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
-    assert.equal(pkg.version, '1.7.0');
+    assert.equal(pkg.version, '1.8.0');
     assert.equal(pkg.types, './types/index.d.ts');
     for (const [subpath, target] of Object.entries(pkg.exports)) {
         assert.equal(typeof target, 'object', `Export ${subpath} must map { types, default }`);

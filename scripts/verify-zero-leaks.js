@@ -86,8 +86,8 @@ function hasDisallowedOrgHandleUsage(line) {
     if (!/\bkruschdev\b/i.test(line)) return false;
     // Strip approved public GitHub organization & MIT contributor contexts
     const scrubbed = line
-        .replace(/github\.com\/kruschdev\b/gi, '')
-        .replace(/github:kruschdev\//gi, '')
+        .replace(/github\.com\/kruschdev(?:\/[A-Za-z0-9_.-]+)?\b/gi, '')
+        .replace(/github:kruschdev\/(?:[A-Za-z0-9_.-]+)?/gi, '')
         .replace(/kruschdev\s*<kruschdev@users\.noreply\.github\.com>/gi, '')
         .replace(/kruschdev@users\.noreply\.github\.com/gi, '')
         .replace(/Copyright\s*\(c\)\s*\d{4}\s*kruschdev\b/gi, '')

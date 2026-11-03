@@ -725,6 +725,88 @@ eng = create_managed_async_engine("sqlite+aiosqlite:///app.db")
 async with async_session_scope(eng["data"]["session_factory"]) as session:
     await session.execute(...)`,
         antiPatternDescription: 'Ad-hoc create_engine/create_async_engine blocks missing SQLite WAL/busy_timeout pragmas, pool_pre_ping, DSN credential scrubbing, or CancelledError rollback shielding.'
+    }),
+    freezeBrick({
+        id: 'idempotency',
+        runtime: 'node',
+        importPath: '@krusch/toolkit/idempotency',
+        exports: [
+            'DEFAULT_IDEMPOTENCY_OPTIONS',
+            'normalizeIdempotencyKey',
+            'computePayloadFingerprint',
+            'createIdempotencyStore',
+            'withIdempotency',
+            'createIdempotencyMiddleware'
+        ],
+        summary: 'Atomic Idempotency-Key in-flight lock (409), SHA-256 payload-mismatch guard (422), fencing tokens, and tenant-scoped replay middleware.',
+        snippet: `import { createIdempotencyStore, withIdempotency } from '@krusch/toolkit/idempotency';
+
+const store = createIdempotencyStore({ ttlMs: 86_400_000, maxEntries: 10_000 });
+const res = await withIdempotency(
+  store,
+  { key: req.headers['idempotency-key'], payload: req.body, method: 'POST', path: '/api/charges' },
+  async () => ({ chargeId: 'ch_01', amountCents: 4999 })
+);`,
+        antiPatternDescription: 'Non-atomic check-then-act payment/webhook handlers vulnerable to duplicate concurrent charges, retry storms, or key reuse with mutated payloads.'
+    }),
+    freezeBrick({
+        id: 'audit-log',
+        runtime: 'node',
+        importPath: '@krusch/toolkit/audit-log',
+        exports: [
+            'GENESIS_AUDIT_HASH',
+            'canonicalizeAuditPayload',
+            'computeAuditEntryHash',
+            'verifyAuditChain',
+            'createAuditLog'
+        ],
+        summary: 'Tamper-evident SHA-256 / HMAC hash-chained compliance ledger with canonical JSON serialization and SQLite BEFORE UPDATE/DELETE immutability triggers.',
+        snippet: `import { createAuditLog } from '@krusch/toolkit/audit-log';
+
+const audit = createAuditLog({ sqlitePath: './data/audit.db' });
+audit.append({ tenantId: 'org_1', actor: 'usr_42', action: 'billing.refund', resource: 'inv_99', outcome: 'SUCCESS' });
+const verified = audit.verify();`,
+        antiPatternDescription: 'Mutable SQL audit tables or unstructured console logs where silent row edits, deletions, or truncations go undetected under SOX/HIPAA/SOC2 review.'
+    }),
+    freezeBrick({
+        id: 'rbac',
+        runtime: 'node',
+        importPath: '@krusch/toolkit/rbac',
+        exports: [
+            'matchPermissionPattern',
+            'createRbacPolicy',
+            'assertTenantOwnership',
+            'evaluateAccess',
+            'createRbacGuard'
+        ],
+        summary: 'Zero-node:* deny-by-default role inheritance & scoped permission evaluator with explicit-deny precedence and OWASP A01 multi-tenant IDOR guards.',
+        snippet: `import { createRbacPolicy, evaluateAccess } from '@krusch/toolkit/rbac';
+
+const policy = createRbacPolicy({
+  roles: { billing_admin: { allow: ['billing:*'], deny: ['billing:purge'] } }
+});
+const decision = evaluateAccess(policy, req.user, 'billing:refund', { resource: invoice });`,
+        antiPatternDescription: 'Scattered req.user.role === "admin" checks missing explicit-deny precedence, role cycle checks, or strict subject.tenantId === resource.tenantId IDOR isolation.'
+    }),
+    freezeBrick({
+        id: 'pagination',
+        runtime: 'node',
+        importPath: '@krusch/toolkit/pagination',
+        exports: [
+            'DEFAULT_PAGINATION_LIMITS',
+            'clampPageLimit',
+            'encodeCursor',
+            'decodeCursor',
+            'buildKeysetPage',
+            'paginateItems'
+        ],
+        summary: 'Constant-time HMAC-SHA256 tamper-signed base64url keyset cursor encoder/decoder with scope/TTL binding and bounded page-limit clamps.',
+        snippet: `import { clampPageLimit, decodeCursor, buildKeysetPage } from '@krusch/toolkit/pagination';
+
+const limit = clampPageLimit(req.query.limit, { defaultLimit: 25, maxLimit: 100 });
+const cursor = req.query.cursor ? decodeCursor(req.query.cursor, { secret: process.env.CURSOR_SECRET, expectedScope: req.user.tenantId }) : null;
+const page = buildKeysetPage(rows, { limit, sortField: 'createdAt', idField: 'id', secret: process.env.CURSOR_SECRET, scope: req.user.tenantId });`,
+        antiPatternDescription: 'Unbounded ?limit=9999999 queries causing OOMs, slow OFFSET scans, or unsigned base64 cursors vulnerable to cross-tenant cursor tampering.'
     })
 ]);
 

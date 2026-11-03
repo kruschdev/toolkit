@@ -357,3 +357,42 @@ export {
     runAsyncWithPartialStdout,
     createGroundedHarnessLoop
 } from './grounded-harness.js';
+
+// Wave 7 Atomic Request Idempotency Lock, Payload Fingerprinting & Replay Cache (@krusch/toolkit/idempotency)
+export {
+    DEFAULT_IDEMPOTENCY_OPTIONS,
+    normalizeIdempotencyKey,
+    computePayloadFingerprint,
+    createIdempotencyStore,
+    withIdempotency,
+    createIdempotencyMiddleware
+} from './idempotency.js';
+
+// Wave 7 Tamper-Evident SHA-256 Hash-Chained Compliance Ledger (@krusch/toolkit/audit-log)
+export {
+    GENESIS_AUDIT_HASH,
+    canonicalizeAuditPayload,
+    computeAuditEntryHash,
+    verifyAuditChain,
+    createAuditLog
+} from './audit-log.js';
+
+// Wave 7 Deny-by-Default RBAC Policy Evaluator & Multi-Tenant IDOR Guard (@krusch/toolkit/rbac)
+export {
+    matchPermissionPattern,
+    createRbacPolicy,
+    assertTenantOwnership,
+    evaluateAccess,
+    createRbacGuard
+} from './rbac.js';
+
+// Wave 7 HMAC-Signed Keyset Cursor & Bounded Limit Pagination (@krusch/toolkit/pagination)
+export {
+    DEFAULT_PAGINATION_LIMITS,
+    clampPageLimit,
+    encodeCursor,
+    decodeCursor,
+    buildKeysetPage,
+    paginateItems
+} from './pagination.js';
+

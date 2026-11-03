@@ -585,7 +585,7 @@ def test_sse_midstream_disconnect_deterministically_awaits_aclosing_before_itera
         assert state["wrapper_closed"] is True
         return chunks
 
-    emitted = asyncio.run(_consume())
+    emitted = asyncio.run(asyncio.wait_for(_consume(), timeout=5.0))
     assert len(emitted) == 2  # initial ": ping\n\n" + first "token" frame, no "done" frame
     assert "chunk-1" in emitted[1]
 

@@ -1,7 +1,7 @@
 {
     "name": "@krusch/toolkit",
-    "version": "1.7.0",
-    "description": "Shared Lego bricks, TypeScript declarations (.d.ts), & zero-LLM starter blueprints for homelab projects — HTTP, Edge/Workers, Webhooks, Security/SSRF/RateLimit, Schema, Safe YAML, Upload/MIME, Cascade/CircuitBreaker, Audio/Whisper/TTS, CLI, SSE, MCP, PG/pgvector, node:sqlite/FTS5/RRF, React UI, LLM, embeddings, Raw-RAG, Lego Scout",
+    "version": "1.8.0",
+    "description": "Shared Lego bricks, TypeScript declarations (.d.ts), & zero-LLM starter blueprints for homelab projects — HTTP, Edge/Workers, Webhooks, Security/SSRF/RateLimit, Idempotency, AuditLog, RBAC/Tenancy, Pagination, Schema, Safe YAML, Upload/MIME, Cascade/CircuitBreaker, Audio/Whisper/TTS, CLI, SSE, MCP, PG/pgvector, node:sqlite/FTS5/RRF, React UI, LLM, embeddings, Raw-RAG, Lego Scout",
     "type": "module",
     "main": "index.js",
     "types": "./types/index.d.ts",
@@ -253,6 +253,22 @@
         "./grounded-harness": {
             "types": "./types/grounded-harness.d.ts",
             "default": "./grounded-harness.js"
+        },
+        "./idempotency": {
+            "types": "./types/idempotency.d.ts",
+            "default": "./idempotency.js"
+        },
+        "./audit-log": {
+            "types": "./types/audit-log.d.ts",
+            "default": "./audit-log.js"
+        },
+        "./rbac": {
+            "types": "./types/rbac.d.ts",
+            "default": "./rbac.js"
+        },
+        "./pagination": {
+            "types": "./types/pagination.d.ts",
+            "default": "./pagination.js"
         }
     },
     "scripts": {

@@ -9,11 +9,11 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-test('INV-LEGO-21..22: catalog registers 35 runtime bricks including python_http_client and python_streamlit_ui', async () => {
+test('INV-LEGO-21..22: catalog registers 39 runtime bricks including python_http_client and python_streamlit_ui', async () => {
     const { RUNTIME_BRICKS, listLegoBricks, getLegoBrick } = await import('./catalog.js');
 
-    assert.equal(RUNTIME_BRICKS.length, 35);
-    assert.equal(listLegoBricks().length, 35);
+    assert.equal(RUNTIME_BRICKS.length, 39);
+    assert.equal(listLegoBricks().length, 39);
     assert.equal(listLegoBricks({ runtime: 'python' }).length, 10);
 
     const pyHttp = getLegoBrick('python_http_client');
