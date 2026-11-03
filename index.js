@@ -15,6 +15,7 @@ export {
     isGemini4Model,
     normalizeThinkingLevel,
     resolveMaxOutputTokens,
+    resolveGeminiToolConfig,
     buildGeminiPayload,
     extractGeminiTextParts
 } from './llm.js';
@@ -338,3 +339,20 @@ export {
     loadSafeYamlPack
 } from './yaml.js';
 
+// Turn-0 Grounded, Scale-Aware, Low-Tool-Call Harness Bricks (@krusch/toolkit/grounded-harness)
+export {
+    SCALE_TIERS,
+    inferModelScaleMetadata,
+    resolveScaleProfile,
+    buildScaleAwareDirective,
+    measureToolSchemaSavings,
+    createToolBudgetGate,
+    createDeltaContextTracker,
+    buildSafeGeminiToolConfig,
+    normalizeCodeSnippetForHash,
+    inspectOutputDefects,
+    detectDatasetSchemaHazards,
+    formatTimeoutWithPartialStdout,
+    runAsyncWithPartialStdout,
+    createGroundedHarnessLoop
+} from './grounded-harness.js';

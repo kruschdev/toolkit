@@ -345,6 +345,10 @@ export function buildGeminiPayload(systemPrompt, userMessage, config, options = 
             : (config.format === 'json' ? { responseMimeType: 'application/json' } : {})),
     };
 
+    const resolvedTools = options.tools !== undefined ? options.tools : config.tools;
+    const hasDeclaredTools = hasNonEmptyGeminiTools(resolvedTools);
+    const resolvedToolConfig = resolveGeminiToolConfig(config, options);
+
     return {
         system_instruction: config.messages
             ? { parts: [{ text: config.messages.find(m => m.role === 'system')?.content || systemPrompt || '' }] }
@@ -356,11 +360,44 @@ export function buildGeminiPayload(systemPrompt, userMessage, config, options = 
             }))
             : [{ role: 'user', parts: [{ text: userMessage }] }],
         generationConfig,
-        ...((config.tools || options.tools) && {
-            tools: config.tools || options.tools
-        }),
+        ...(hasDeclaredTools ? { tools: resolvedTools } : {}),
+        ...(resolvedToolConfig ? { toolConfig: resolvedToolConfig } : {}),
         ...(continuationToken ? { continuationToken } : {})
     };
+}
+
+function hasNonEmptyGeminiTools(tools) {
+    if (Array.isArray(tools)) return tools.length > 0;
+    if (tools !== null && typeof tools === 'object') return Object.keys(tools).length > 0;
+    return false;
+}
+
+/**
+ * Resolve Gemini `toolConfig`, automatically setting `{ functionCallingConfig: { mode: 'NONE' } }`
+ * whenever no `tools` are declared so fenced markdown code blocks (e.g. ```py) are never
+ * misparsed as `MALFORMED_FUNCTION_CALL` (`INV-GH-09`).
+ *
+ * @param {object} [config={}]
+ * @param {object} [options={}]
+ * @returns {object|undefined}
+ */
+export function resolveGeminiToolConfig(config = {}, options = {}) {
+    const safeConfig = config && typeof config === 'object' ? config : {};
+    const safeOptions = options && typeof options === 'object' ? options : {};
+    const explicitToolConfig = safeOptions.toolConfig !== undefined
+        ? safeOptions.toolConfig
+        : safeConfig.toolConfig;
+    if (explicitToolConfig && typeof explicitToolConfig === 'object' && !Array.isArray(explicitToolConfig)) {
+        return explicitToolConfig;
+    }
+    if (safeOptions.disableAutoToolConfigNone === true || safeConfig.disableAutoToolConfigNone === true) {
+        return undefined;
+    }
+    const resolvedTools = safeOptions.tools !== undefined ? safeOptions.tools : safeConfig.tools;
+    if (!hasNonEmptyGeminiTools(resolvedTools)) {
+        return { functionCallingConfig: { mode: 'NONE' } };
+    }
+    return undefined;
 }
 
 /**

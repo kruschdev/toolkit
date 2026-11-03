@@ -30,6 +30,8 @@ export interface LLMConfig {
     format?: 'json' | string;
     responseSchema?: Record<string, unknown>;
     tools?: unknown[];
+    toolConfig?: Record<string, unknown>;
+    disableAutoToolConfigNone?: boolean;
     messages?: LLMChatMessage[];
     [key: string]: unknown;
 }
@@ -48,6 +50,8 @@ export interface ChatOptions {
     signal?: AbortSignal;
     traceContext?: unknown;
     tools?: unknown[];
+    toolConfig?: Record<string, unknown>;
+    disableAutoToolConfigNone?: boolean;
     messages?: LLMChatMessage[];
     returnFullResponse?: boolean;
     [key: string]: unknown;
@@ -118,6 +122,11 @@ export declare function chatJson<TResult = Record<string, any>>(
     config: LLMConfig,
     options?: ChatOptions
 ): Promise<TResult>;
+
+export declare function resolveGeminiToolConfig(
+    config?: Partial<LLMConfig> & Record<string, unknown>,
+    options?: ChatOptions
+): Record<string, unknown> | undefined;
 
 export declare function buildGeminiPayload(
     systemPrompt: string,

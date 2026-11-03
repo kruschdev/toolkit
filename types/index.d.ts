@@ -22,6 +22,7 @@ export {
     isGemini4Model,
     normalizeThinkingLevel,
     resolveMaxOutputTokens,
+    resolveGeminiToolConfig,
     buildGeminiPayload,
     extractGeminiTextParts
 } from './llm.js';
@@ -751,3 +752,64 @@ export type {
     LoadedSafeYamlPackData
 } from './yaml.js';
 
+// Turn-0 Grounded, Scale-Aware, Low-Tool-Call Harness Bricks (@krusch/toolkit/grounded-harness)
+export {
+    SCALE_TIERS,
+    inferModelScaleMetadata,
+    resolveScaleProfile,
+    buildScaleAwareDirective,
+    measureToolSchemaSavings,
+    createToolBudgetGate,
+    createDeltaContextTracker,
+    buildSafeGeminiToolConfig,
+    normalizeCodeSnippetForHash,
+    inspectOutputDefects,
+    detectDatasetSchemaHazards,
+    formatTimeoutWithPartialStdout,
+    runAsyncWithPartialStdout,
+    createGroundedHarnessLoop
+} from './grounded-harness.js';
+export type {
+    ScaleTier,
+    ModelScaleHints,
+    InferredModelScaleMetadata,
+    ResolveScaleProfileOptions,
+    ScaleProfile,
+    ToolSchemaSavings,
+    ToolBudgetGateOptions,
+    ToolBudgetGate,
+    DeltaContextTrackerOptions,
+    DeltaChunkCandidate,
+    DeltaFilterResult,
+    DeltaContextMetrics,
+    DeltaContextTracker,
+    GeminiFunctionCallingConfig,
+    GeminiToolConfig,
+    BuildSafeGeminiToolConfigOptions,
+    OutputDefectCode,
+    OutputDefect,
+    InspectOutputDefectsInput,
+    InspectOutputDefectsResult,
+    DetectDatasetSchemaHazardsInput,
+    DatasetSchemaHazardsResult,
+    FormatTimeoutOptions,
+    TimeoutWithPartialStdoutResult,
+    AsyncPartialStdoutContext,
+    RunAsyncWithPartialStdoutOptions,
+    RunAsyncWithPartialStdoutSuccess,
+    GroundedHarnessLoopOptions,
+    CompilePromptOptions,
+    CompilePromptData,
+    EvaluateTurnInput,
+    EvaluateTurnData,
+    InterceptDecision,
+    InterceptToolOptions,
+    InterceptToolCallData,
+    RecordToolOutcomeOptions,
+    RecordToolOutcomeData,
+    VerifyStopAction,
+    VerifyStopTurnState,
+    VerifyStopData,
+    GroundedHarnessStats,
+    GroundedHarnessLoop
+} from './grounded-harness.js';

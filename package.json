@@ -249,6 +249,10 @@
         "./raw-rag": {
             "types": "./types/raw-rag.d.ts",
             "default": "./raw-rag.js"
+        },
+        "./grounded-harness": {
+            "types": "./types/grounded-harness.d.ts",
+            "default": "./grounded-harness.js"
         }
     },
     "scripts": {

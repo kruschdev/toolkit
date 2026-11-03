@@ -72,6 +72,29 @@ test('@krusch/toolkit/llm — Gemini 4 Argon Developer Guide Compliance Suite', 
         assert.equal(legacyPayload.generationConfig.maxOutputTokens, 4096);
         assert.equal('thinkingConfig' in legacyPayload.generationConfig, false);
         assert.equal('continuationToken' in legacyPayload, false);
+
+        // INV-GH-09: Auto-set functionCallingConfig.mode = "NONE" when tools are omitted or empty []
+        assert.deepEqual(argonPayload.toolConfig, { functionCallingConfig: { mode: 'NONE' } });
+        assert.deepEqual(legacyPayload.toolConfig, { functionCallingConfig: { mode: 'NONE' } });
+
+        const emptyToolsPayload = buildGeminiPayload(
+            'System prompt',
+            'Emit a ```py block.',
+            { model: 'gemini-3.5-flash-lite', tools: [] }
+        );
+        assert.equal('tools' in emptyToolsPayload, false);
+        assert.deepEqual(emptyToolsPayload.toolConfig, { functionCallingConfig: { mode: 'NONE' } });
+
+        const withToolsPayload = buildGeminiPayload(
+            'System prompt',
+            'Call query_db.',
+            {
+                model: 'gemini-4-argon',
+                tools: [{ functionDeclarations: [{ name: 'query_db', description: 'Run SQL' }] }]
+            }
+        );
+        assert.equal(Array.isArray(withToolsPayload.tools), true);
+        assert.equal('toolConfig' in withToolsPayload, false);
     });
 
     await t.test('4. extractGeminiTextParts filters out internal thought parts', () => {
