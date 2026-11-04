@@ -19,7 +19,8 @@ import {
     getLegoBrick,
     listArchetypes,
     getArchetype,
-    auditBoilerplateText
+    auditBoilerplateText,
+    scoreLegoBrickCoverage
 } from '../catalog.js';
 import { scaffoldProject } from '../scaffold.js';
 import { scoutHomelabLegoCandidates } from '../lego-scout.js';
@@ -423,22 +424,22 @@ export async function runCli(argv = process.argv.slice(2), io = {}) {
         }
 
         const files = collectAuditFiles(resolvedTarget);
-        const findings = [];
-        let flaggedFileCount = 0;
-
-        for (const filePath of files) {
-            const code = fs.readFileSync(filePath, 'utf-8');
-            const report = auditBoilerplateText(code, filePath);
-            if (!report.data.clean) {
-                flaggedFileCount += 1;
-                for (const item of report.data.findings) {
-                    findings.push({
-                        filePath,
-                        ...item
-                    });
-                }
-            }
-        }
+        const fileEntries = files.map((filePath) => ({
+            filePath,
+            code: fs.readFileSync(filePath, 'utf-8').slice(0, 1_048_576)
+        }));
+        const coverage = scoreLegoBrickCoverage(fileEntries);
+        const {
+            flaggedFiles: flaggedFileCount,
+            findings,
+            sealedFiles,
+            sealedBrickIds,
+            sealedTouchpoints,
+            recommendedBrickIds,
+            sealedCoverageRatio,
+            breakerTripped,
+            estimatedAuditTokensSaved
+        } = coverage.data;
 
         const clean = findings.length === 0;
         const summary = clean
@@ -450,6 +451,13 @@ export async function runCli(argv = process.argv.slice(2), io = {}) {
             scannedFiles: files.length,
             flaggedFiles: flaggedFileCount,
             clean,
+            sealedFiles,
+            sealedBrickIds,
+            sealedTouchpoints,
+            recommendedBrickIds,
+            sealedCoverageRatio,
+            breakerTripped,
+            estimatedAuditTokensSaved,
             findings
         });
 

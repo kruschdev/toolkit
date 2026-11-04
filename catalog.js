@@ -3359,42 +3359,69 @@ export function auditBoilerplateText(code = '', filePath = '') {
         }
     }
 
-    // 14. Unsigned base64 pagination cursors or unclamped query-param SQL LIMIT/OFFSET without @krusch/toolkit/pagination
+    // 14. Unsigned base64 pagination cursors or unclamped query/ORM pagination without @krusch/toolkit/pagination
     if (!isPython) {
-        const hasUnsignedBase64Cursor =
-            /\b(?:cursor|nextCursor|next_cursor)\b/i.test(cleaned) &&
-            (/\bBuffer\.from\s*\([^()\n]{0,120}\bcursor\b[^()\n]{0,40},\s*['"`]base64(?:url)?['"`]\s*\)/i.test(
-                cleaned
-            ) ||
-                /\b(?:nextCursor|next_cursor)\s*=\s*(?:Buffer\.from\s*\([^;\n]{0,160}\.toString\s*\(\s*['"`]base64(?:url)?['"`]\s*\)|btoa\s*\()/i.test(
-                    cleaned
-                ) ||
-                /\b(?:atob|btoa)\s*\([^()\n]{0,80}\bcursor\b/i.test(cleaned)) &&
-            !/\b(?:createHmac|timingSafeEqual)\b/.test(cleaned);
-        const hasUnclampedQuerySqlOffset =
-            /(?:req|request)\??\.query\b|\bsearchParams\b/.test(cleaned) &&
-            /\bLIMIT\b/i.test(cleaned) &&
-            /\bOFFSET\b/i.test(cleaned) &&
-            /(?:\b(?:(?:req|request)\??\.query|searchParams\.get)\s*(?:\??\.\s*(?:limit|offset|page)\b|\(\s*['"`](?:limit|offset|page)['"`]\s*\))|\{[^{}\n]{0,120}\b(?:limit|offset|page)\b[^{}\n]{0,120}\}\s*=\s*(?:req|request)\??\.query\b)/.test(
-                cleaned
-            ) &&
-            /\b(?:LIMIT\s+(?:\$\d+|\?|:[\w]+|\d+|\$\{[^{}\n]{1,80}\})\s+OFFSET\s+(?:\$\d+|\?|:[\w]+|\d+|\$\{[^{}\n]{1,80}\})|OFFSET\s+(?:\$\d+|\?|:[\w]+|\d+|\$\{[^{}\n]{1,80}\})\s+LIMIT\s+(?:\$\d+|\?|:[\w]+|\d+|\$\{[^{}\n]{1,80}\}))/i.test(
-                cleaned
-            ) &&
-            !/\bMath\.min\s*\(/.test(cleaned);
         const usesToolkitPagination =
             /@krusch\/toolkit\/pagination\b|\b(?:clampPageLimit|encodeCursor|decodeCursor|buildKeysetPage|paginateItems)\b/.test(
                 cleaned
             );
-        if ((hasUnsignedBase64Cursor || hasUnclampedQuerySqlOffset) && !usesToolkitPagination) {
-            findings.push({
-                ruleId: 'unsafe-pagination-cursor',
-                brickId: 'pagination',
-                importPath: '@krusch/toolkit/pagination',
-                severity: 'warn',
-                message: 'Unsigned base64 cursor or unclamped query LIMIT/OFFSET detected; use clampPageLimit, encodeCursor, decodeCursor, or buildKeysetPage from @krusch/toolkit/pagination.'
-            });
+        if (!usesToolkitPagination) {
+            const hasUnsignedBase64Cursor =
+                /\b(?:cursor|nextCursor|next_cursor)\b/i.test(cleaned) &&
+                (/\bBuffer\.from\s*\([^()\n]{0,120}\bcursor\b[^()\n]{0,40},\s*['"`]base64(?:url)?['"`]\s*\)/i.test(
+                    cleaned
+                ) ||
+                    /\b(?:nextCursor|next_cursor)\s*=\s*(?:Buffer\.from\s*\([^;\n]{0,160}\.toString\s*\(\s*['"`]base64(?:url)?['"`]\s*\)|btoa\s*\()/i.test(
+                        cleaned
+                    ) ||
+                    /\b(?:atob|btoa)\s*\([^()\n]{0,80}\bcursor\b/i.test(cleaned)) &&
+                !/\b(?:createHmac|timingSafeEqual)\b/.test(cleaned);
+            const hasUnclampedQuerySqlOffset =
+                /(?:req|request)\??\.query\b|\bsearchParams\b/.test(cleaned) &&
+                /\bLIMIT\b/i.test(cleaned) &&
+                /\bOFFSET\b/i.test(cleaned) &&
+                /(?:\b(?:(?:req|request)\??\.query|searchParams\.get)\s*(?:\??\.\s*(?:limit|offset|page)\b|\(\s*['"`](?:limit|offset|page)['"`]\s*\))|\{[^{}\n]{0,120}\b(?:limit|offset|page)\b[^{}\n]{0,120}\}\s*=\s*(?:req|request)\??\.query\b)/.test(
+                    cleaned
+                ) &&
+                /\b(?:LIMIT\s+(?:\$\d+|\?|:[\w]+|\d+|\$\{[^{}\n]{1,80}\})\s+OFFSET\s+(?:\$\d+|\?|:[\w]+|\d+|\$\{[^{}\n]{1,80}\})|OFFSET\s+(?:\$\d+|\?|:[\w]+|\d+|\$\{[^{}\n]{1,80}\})\s+LIMIT\s+(?:\$\d+|\?|:[\w]+|\d+|\$\{[^{}\n]{1,80}\}))/i.test(
+                    cleaned
+                ) &&
+                !/\bMath\.min\s*\(/.test(cleaned);
+            const hasUnclampedOrmPagination = hasUnclampedOrmOrQueryPagination(cleaned);
+            if (hasUnsignedBase64Cursor || hasUnclampedQuerySqlOffset || hasUnclampedOrmPagination) {
+                findings.push({
+                    ruleId: 'unsafe-pagination-cursor',
+                    brickId: 'pagination',
+                    importPath: '@krusch/toolkit/pagination',
+                    severity: 'warn',
+                    message: 'Unsigned base64 cursor or unclamped query/ORM pagination detected; use clampPageLimit, encodeCursor, decodeCursor, or buildKeysetPage from @krusch/toolkit/pagination.'
+                });
+            }
         }
+    }
+
+    // 15. Unvalidated user-controlled outbound HTTP URL (SSRF) without @krusch/toolkit/security or krusch_toolkit.security
+    if (hasUnvalidatedOutboundSsrf(cleaned, isPython)) {
+        findings.push({
+            ruleId: 'unvalidated-outbound-ssrf',
+            brickId: isPython ? 'python_security' : 'security',
+            importPath: isPython ? 'krusch_toolkit.security' : '@krusch/toolkit/security',
+            severity: 'warn',
+            message: isPython
+                ? 'User-controlled outbound HTTP URL detected without SSRF IP validation; validate with validate_outbound_url from krusch_toolkit.security.'
+                : 'User-controlled outbound HTTP URL detected without SSRF protection; use safeFetch or validateOutboundUrl from @krusch/toolkit/security.'
+        });
+    }
+
+    // 16. Hardcoded JWT/session/cookie secret fallback without @krusch/toolkit/auth
+    if (hasHardcodedAuthSecretFallback(cleaned, isPython)) {
+        findings.push({
+            ruleId: 'hardcoded-auth-secret-fallback',
+            brickId: 'auth',
+            importPath: '@krusch/toolkit/auth',
+            severity: 'warn',
+            message: 'Hardcoded JWT, session, or cookie secret fallback detected; require environment-injected secrets via createAuth from @krusch/toolkit/auth.'
+        });
     }
 
     const clean = findings.length === 0;
@@ -3412,6 +3439,279 @@ export function auditBoilerplateText(code = '', filePath = '') {
             findings
         }
     };
+}
+
+const TAINTED_URL_PROP_RE =
+    /^(?:url|targetUrl|target_url|webhookUrl|webhook_url|callbackUrl|callback_url|endpoint|endpointUrl|endpoint_url|proxyUrl|proxy_url|fetchUrl|fetch_url|feedUrl|feed_url|imageUrl|image_url|sourceUrl|source_url|remoteUrl|remote_url|destUrl|dest_url|uri|href)$/i;
+
+function hasUnclampedOrmOrQueryPagination(cleaned) {
+    if (!/\b(?:findMany|skip|limit|offset|query)\b/.test(cleaned)) return false;
+    const codeOnly = stripStringBodiesForYamlAudit(cleaned, false);
+    if (/\bMath\.min\s*\(/.test(codeOnly)) return false;
+
+    if (/\bfindMany\s*\(/.test(codeOnly) && /\bskip\s*:/.test(codeOnly) && /\btake\s*:/.test(codeOnly)) {
+        const findManyRe = /\bfindMany\s*\(/g;
+        let match;
+        while ((match = findManyRe.exec(codeOnly)) !== null) {
+            let j = match.index + match[0].length;
+            const maxEnd = Math.min(codeOnly.length, j + 800);
+            let depth = 1;
+            let argsSlice = '';
+            while (j < maxEnd && depth > 0) {
+                const c = codeOnly[j];
+                if (c === '(') depth += 1;
+                else if (c === ')') depth -= 1;
+                if (depth > 0) argsSlice += c;
+                j += 1;
+            }
+            const hasDynamicSkip = /\bskip\s*:\s*(?!\d+\s*[,}\r\n])/.test(argsSlice);
+            const hasDynamicTake =
+                /\btake\s*:\s*(?!\d+\s*[,}\r\n])(?:(?:Number|parseInt)\s*\(\s*|\+\s*)?(?:(?:req|request|query|params)\??\.\s*)?(?:limit|take|pageSize|perPage|per_page)\b/.test(
+                    argsSlice
+                );
+            if (hasDynamicSkip && hasDynamicTake) {
+                return true;
+            }
+        }
+    }
+
+    if (/(?:req|request)\??\.\s*query\b/.test(codeOnly)) {
+        if (
+            /\.(?:skip\s*\([^()\n]{1,120}\)\s*\.\s*limit\s*\(\s*(?!\d+\s*\))[^()\n]{1,120}\)|limit\s*\(\s*(?!\d+\s*\))[^()\n]{1,120}\)\s*\.\s*skip\s*\([^()\n]{1,120}\))/.test(
+                codeOnly
+            )
+        ) {
+            return true;
+        }
+        const hasCoercedLimit =
+            /(?:Number|parseInt)\s*\(\s*(?:req|request)\??\.\s*query(?:\??\.\s*(?:limit|take|pageSize|per_page)\b|\[\s*['"`](?:limit|take|pageSize|per_page)['"`]\s*\])/.test(
+                cleaned
+            );
+        const hasPairedOffset =
+            /(?:req|request)\??\.\s*query(?:\??\.\s*(?:offset|skip|page)\b|\[\s*['"`](?:offset|skip|page)['"`]\s*\])/.test(
+                cleaned
+            );
+        if (hasCoercedLimit && hasPairedOffset) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function hasUnvalidatedOutboundSsrf(cleaned, isPython) {
+    if (isPython) {
+        if (!/\b(?:httpx|requests|aiohttp|urlopen)\b/.test(cleaned)) return false;
+        const usesToolkitPySec =
+            /\bkrusch_toolkit\.security\b/.test(cleaned) ||
+            /\bfrom\s+krusch_toolkit\s+import\b[^\n]*\b(?:security|validate_outbound_url|is_private_or_reserved_ip)\b/.test(
+                cleaned
+            ) ||
+            /\b(?:validate_outbound_url|is_private_or_reserved_ip)\b/.test(cleaned);
+        if (usesToolkitPySec) return false;
+
+        const codeOnly = stripStringBodiesForYamlAudit(cleaned, true);
+        if (
+            /\b(?:httpx|requests)\s*\.\s*(?:get|post|put|delete|patch|head|request)\s*\(\s*(?:str\s*\(\s*)?(?:request\s*\.\s*(?:query_params|args|form|values)|req\s*\.\s*(?:query_params|args))\b/.test(
+                codeOnly
+            ) ||
+            /\burlopen\s*\(\s*(?:str\s*\(\s*)?request\s*\.\s*(?:query_params|args|form|values)\b/.test(codeOnly)
+        ) {
+            return true;
+        }
+
+        const pyTainted = new Set();
+        for (const line of cleaned.split('\n')) {
+            if (pyTainted.size >= 32) break;
+            const m =
+                /^\s*([A-Za-z_]\w*)\s*(?::\s*[A-Za-z_][\w[\],\s|]{0,40})?=\s*(?:str\s*\(\s*)?request\s*\.\s*(?:query_params|args|form|values)\b(.*)$/.exec(
+                    line
+                );
+            if (!m) continue;
+            const lhs = m[1];
+            const rhsTail = m[2] || '';
+            const keyMatch = /(?:\.\s*get\s*\(\s*['"]|\[\s*['"])([A-Za-z0-9_-]+)['"]/.exec(rhsTail);
+            if (TAINTED_URL_PROP_RE.test(lhs) || (keyMatch && TAINTED_URL_PROP_RE.test(keyMatch[1]))) {
+                pyTainted.add(lhs);
+            }
+        }
+
+        if (/@(?:app|router)\s*\.\s*(?:get|post|put|delete|patch|api_route)\b/.test(codeOnly)) {
+            const defRe = /\bdef\s+\w+\s*\(([^)]{1,240})\)/g;
+            let dm;
+            while ((dm = defRe.exec(codeOnly)) !== null && pyTainted.size < 32) {
+                const paramRe =
+                    /\b(url|target_url|webhook_url|callback_url|endpoint_url|proxy_url|feed_url|source_url)\s*:\s*(?:Optional\s*\[\s*)?str\b/g;
+                let pm;
+                while ((pm = paramRe.exec(dm[1])) !== null && pyTainted.size < 32) {
+                    pyTainted.add(pm[1]);
+                }
+            }
+        }
+
+        for (const v of pyTainted) {
+            const callRe = new RegExp(
+                `\\b(?:httpx|requests|client|session)\\s*\\.\\s*(?:get|post|put|delete|patch|head|request)\\s*\\(\\s*(?:str\\s*\\(\\s*)?${v}\\s*(?:\\)\\s*)?[,)]|\\burlopen\\s*\\(\\s*${v}\\s*[,)]`
+            );
+            if (callRe.test(codeOnly)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    if (!/\b(?:fetch|axios|needle|got|https?)\b/.test(cleaned)) return false;
+    if (!/(?:req|request)\??\.\s*(?:query|body|params)\b|\bc\.req\.query\s*\(/.test(cleaned)) return false;
+    if (/@krusch\/toolkit\/security\b|\b(?:safeFetch|validateOutboundUrl|isPrivateOrReservedIp)\b/.test(cleaned)) {
+        return false;
+    }
+
+    const codeOnly = stripStringBodiesForYamlAudit(cleaned, false);
+    const httpCallPrefix =
+        '(?:(?:^|[^.\\w$])fetch|(?:globalThis|window|self)\\s*\\.\\s*fetch|\\baxios(?:\\s*\\.\\s*(?:get|post|put|delete|patch|head|request))?|\\bneedle(?:\\s*\\.\\s*(?:get|post|put|delete|head|request))?|\\bgot(?:\\s*\\.\\s*(?:get|post|put|delete|stream))?|\\bhttps?\\s*\\.\\s*(?:get|request))';
+
+    const directCallRe = new RegExp(
+        `${httpCallPrefix}\\s*\\(\\s*(?:new\\s+URL\\s*\\(\\s*)?(?:String\\s*\\(\\s*)?(?:(?:req|request)\\??\\.\\s*(?:query|body|params)\\b|c\\.req\\.query\\s*\\(|\`\\$\\{\\s*(?:req|request)\\??\\.\\s*(?:query|body|params)\\b)`
+    );
+    if (directCallRe.test(codeOnly)) return true;
+
+    if (
+        /\baxios(?:\s*\.\s*request)?\s*\(\s*\{[^{}]{0,240}?\burl\s*:\s*(?:String\s*\(\s*)?(?:(?:req|request)\??\.\s*(?:query|body|params)\b|c\.req\.query\s*\()/.test(
+            codeOnly
+        )
+    ) {
+        return true;
+    }
+
+    const taintedVars = new Set();
+    const assignLineRe =
+        /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)(?:\s*:\s*[^=;\n]{1,60})?\s*=\s*(?:new\s+URL\s*\(\s*)?(?:String\s*\(\s*)?(?:(?:req|request)\??\.\s*(?:query|body|params)(?:\??\.\s*([A-Za-z_$][\w$]*)|\[\s*['"`]([A-Za-z0-9_$-]+)['"`]\s*\])|`\$\{\s*(?:req|request)\??\.\s*(?:query|body|params)\??\.\s*([A-Za-z_$][\w$]*)|c\.req\.query\s*\(\s*['"`]([A-Za-z0-9_$-]+)['"`]\s*\))/;
+    for (const line of cleaned.split('\n')) {
+        if (taintedVars.size >= 32) break;
+        const m = assignLineRe.exec(line);
+        if (!m) continue;
+        const lhs = m[1];
+        const rhsProp = m[2] || m[3] || m[4] || m[5] || '';
+        if (TAINTED_URL_PROP_RE.test(lhs) || TAINTED_URL_PROP_RE.test(rhsProp)) {
+            taintedVars.add(lhs);
+        }
+    }
+
+    const destructRe =
+        /\b(?:const|let|var)\s*\{([^{}]{1,240})\}(?:\s*:\s*[^=;\n]{1,120})?\s*=\s*(?:req|request)\??\.\s*(?:query|body|params)\b/g;
+    let dm;
+    while ((dm = destructRe.exec(codeOnly)) !== null && taintedVars.size < 32) {
+        for (const rawPart of dm[1].split(',')) {
+            const noDefault = rawPart.split('=')[0].trim();
+            const aliasMatch = /^([A-Za-z_$][\w$]*)(?:\s*:\s*([A-Za-z_$][\w$]*))?$/.exec(noDefault);
+            if (!aliasMatch) continue;
+            const propName = aliasMatch[1];
+            const boundName = aliasMatch[2] || aliasMatch[1];
+            if (TAINTED_URL_PROP_RE.test(propName)) {
+                taintedVars.add(boundName);
+            }
+        }
+    }
+
+    for (const ident of taintedVars) {
+        const esc = ident.replace(/\$/g, '\\$');
+        const callRe = new RegExp(
+            `${httpCallPrefix}\\s*\\(\\s*(?:new\\s+URL\\s*\\(\\s*)?(?:String\\s*\\(\\s*)?${esc}(?:\\s*\\.\\s*trim\\s*\\(\\s*\\))?(?:\\s*\\))?\\s*(?:[,)]|as\\b|\\+)`
+        );
+        if (callRe.test(codeOnly)) return true;
+
+        const axiosObjRe = new RegExp(
+            `\\baxios(?:\\s*\\.\\s*request)?\\s*\\(\\s*\\{[^{}]{0,240}?\\burl\\s*(?::\\s*${esc}\\b|${
+                ident === 'url' ? '[,}]' : '(?!)'
+            })`
+        );
+        if (axiosObjRe.test(codeOnly)) return true;
+    }
+
+    return false;
+}
+
+function hasHardcodedAuthSecretFallback(cleaned, isPython) {
+    if (isPython) return false;
+    if (/@krusch\/toolkit\/auth\b|\bcreateAuth\b/.test(cleaned)) return false;
+    if (
+        !/\b(?:JWT_SECRET|AUTH_SECRET|SESSION_SECRET|COOKIE_SECRET|TOKEN_SECRET|APP_SECRET|SIGNING_SECRET|jwt|session|cookieSession|expressjwt|jwtSecret|cookieSecret|sessionSecret)\b/.test(
+            cleaned
+        )
+    ) {
+        return false;
+    }
+
+    const codeOnly = stripStringBodiesForYamlAudit(cleaned, false);
+
+    if (
+        /\bprocess\s*\.\s*env\s*\.\s*(?:JWT_SECRET|AUTH_SECRET|SESSION_SECRET|COOKIE_SECRET|TOKEN_SECRET|APP_SECRET|SIGNING_SECRET)\s*(?:\|\||\?\?)\s*(?:(['"]) {4,}\1|` {4,}`)/.test(
+            codeOnly
+        )
+    ) {
+        return true;
+    }
+
+    const jwtCallRe = /\bjwt\s*\.\s*(?:sign|verify)\s*\(/g;
+    let jm;
+    while ((jm = jwtCallRe.exec(codeOnly)) !== null) {
+        let j = jm.index + jm[0].length;
+        const maxEnd = Math.min(codeOnly.length, j + 512);
+        let parenDepth = 1;
+        let braceDepth = 0;
+        let bracketDepth = 0;
+        let commaIdx = -1;
+        while (j < maxEnd && parenDepth > 0) {
+            const c = codeOnly[j];
+            if (c === '(') parenDepth += 1;
+            else if (c === ')') parenDepth -= 1;
+            else if (c === '{') braceDepth += 1;
+            else if (c === '}') braceDepth = Math.max(0, braceDepth - 1);
+            else if (c === '[') bracketDepth += 1;
+            else if (c === ']') bracketDepth = Math.max(0, bracketDepth - 1);
+            else if (c === ',' && parenDepth === 1 && braceDepth === 0 && bracketDepth === 0) {
+                commaIdx = j;
+                break;
+            }
+            j += 1;
+        }
+        if (commaIdx !== -1) {
+            const secondArg = codeOnly.slice(commaIdx + 1, Math.min(codeOnly.length, commaIdx + 200)).trimStart();
+            if (/^(?:(['"]) {4,}\1|` {4,}`)\s*(?:[,)]|as\b)/.test(secondArg)) {
+                return true;
+            }
+        }
+    }
+
+    const sessionCallRe = /\b(?:session|cookieSession|expressjwt|jwt)\s*\(\s*\{/g;
+    let sm;
+    while ((sm = sessionCallRe.exec(codeOnly)) !== null) {
+        let j = sm.index + sm[0].length;
+        const maxEnd = Math.min(codeOnly.length, j + 600);
+        let braceDepth = 1;
+        let topLevelObj = '';
+        while (j < maxEnd && braceDepth > 0) {
+            const c = codeOnly[j];
+            if (c === '{') {
+                if (braceDepth === 1) topLevelObj += '{}';
+                braceDepth += 1;
+            } else if (c === '}') {
+                braceDepth -= 1;
+            } else if (braceDepth === 1) {
+                topLevelObj += c;
+            }
+            j += 1;
+        }
+        if (/\bsecret\s*:\s*(?:(['"]) {4,}\1|` {4,}`)/.test(topLevelObj)) {
+            return true;
+        }
+    }
+
+    if (/\b(?:jwtSecret|cookieSecret|sessionSecret)\s*:\s*(?:(['"]) {4,}\1|` {4,}`)/.test(codeOnly)) {
+        return true;
+    }
+
+    return false;
 }
 
 function stripStringBodiesForYamlAudit(cleaned, isPython) {
@@ -3652,7 +3952,7 @@ function detectSealedBrickIdsForSource(cleaned, isPython) {
  * across a file list or `{ [filePath]: code }` map, including estimated downstream
  * agent audit-token compression (`tokensPerSealedBrick`, default `850`).
  *
- * @param {Array<{ filePath?: string, code?: string }> | Record<string, string>} [files=[]]
+ * @param {Array<{ filePath?: string, path?: string, code?: string, content?: string }> | Record<string, string>} [files=[]]
  * @param {{ tokensPerSealedBrick?: number }} [options={}]
  * @returns {{
  *   ok: boolean,
@@ -3682,8 +3982,8 @@ export function scoreLegoBrickCoverage(files = [], options = {}) {
     let normalizedEntries = [];
     if (Array.isArray(files)) {
         normalizedEntries = files.map((item) => ({
-            filePath: String(item?.filePath ?? ''),
-            code: String(item?.code ?? '')
+            filePath: String(item?.filePath ?? item?.path ?? ''),
+            code: String(item?.code ?? item?.content ?? '')
         }));
     } else if (files && typeof files === 'object') {
         normalizedEntries = Object.entries(files).map(([filePath, code]) => ({

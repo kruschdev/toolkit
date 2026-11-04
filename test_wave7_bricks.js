@@ -775,3 +775,226 @@ test('INV-LEGO-31..34: auditBoilerplateText & scoreLegoBrickCoverage catch Wave 
     assert.ok(advElapsed < 150, `Expected linear O(N) scan on adversarial input, got ${advElapsed.toFixed(2)}ms`);
 });
 
+test('INV-LEGO-35: ORM pagination, Node/Python SSRF, and hardcoded auth-secret detectors + { path, content } coverage & zero-node:* purity', async () => {
+    const fs = await import('node:fs');
+    const Module = (await import('node:module')).default;
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const { auditBoilerplateText, scoreLegoBrickCoverage } = await import('./catalog.js');
+    const { runCli } = await import('./bin/krusch-lego.js');
+
+    // 1. Zero-node:* / zero-outbound-import isomorphic purity check on lib/catalog.js via V8 ESM loader
+    const resolvedFromCatalog = [];
+    const hook = Module.registerHooks({
+        resolve(specifier, context, nextResolve) {
+            if (context.parentURL && context.parentURL.includes('/catalog.js')) {
+                resolvedFromCatalog.push(specifier);
+            }
+            return nextResolve(specifier, context);
+        }
+    });
+    try {
+        await import(`./catalog.js?purity=${Date.now()}`);
+    } finally {
+        hook.deregister();
+    }
+    assert.deepEqual(resolvedFromCatalog, [], 'lib/catalog.js must resolve zero outbound runtime imports');
+
+    // 2. Rule 14 Extension: Prisma findMany, Mongoose skip/limit, and controller Number(req.query.limit)
+    const prismaSlop = auditBoilerplateText(
+        `export async function listArticles(offset: number, limit: number) {
+            return prisma.article.findMany({
+                where: { published: true },
+                skip: offset || 0,
+                take: limit || 10,
+                orderBy: { createdAt: 'desc' }
+            });
+        }`,
+        'src/app/routes/article/article.service.ts'
+    );
+    assert.deepEqual(
+        prismaSlop.data.findings.map((f) => [f.ruleId, f.brickId]),
+        [['unsafe-pagination-cursor', 'pagination']]
+    );
+
+    const mongoSlop = auditBoilerplateText(
+        `const items = await Item.find({}).skip(Number(req.query.skip) || 0).limit(Number(req.query.limit) || 20);`,
+        'src/routes/items.js'
+    );
+    assert.equal(mongoSlop.data.findings[0]?.ruleId, 'unsafe-pagination-cursor');
+
+    const controllerQuerySlop = auditBoilerplateText(
+        `export async function feed(req, res) {
+            const rows = await getFeed(Number(req.query.offset), Number(req.query.limit));
+            res.json(rows);
+        }`,
+        'src/controllers/article.controller.ts'
+    );
+    assert.equal(controllerQuerySlop.data.findings[0]?.ruleId, 'unsafe-pagination-cursor');
+
+    // Benign Prisma literal take & Math.min-clamped pagination must NOT false-positive
+    assert.equal(
+        auditBoilerplateText(`await prisma.user.findMany({ skip: 0, take: 25 });`, 'src/users.ts').data.clean,
+        true
+    );
+    assert.equal(
+        auditBoilerplateText(
+            `const limit = Math.min(100, Number(req.query.limit) || 20);
+             await prisma.article.findMany({ skip: Number(req.query.offset) || 0, take: limit });`,
+            'src/clamped-prisma.ts'
+        ).data.clean,
+        true
+    );
+
+    // 3. Rule 15: Unvalidated outbound SSRF (Node direct, local taint like NodeGoat, TS destructured, & Python)
+    const nodeGoatSsrf = auditBoilerplateText(
+        `function displayContributions(req, res) {
+            const url = req.query.url + req.query.symbol;
+            return needle.get(url, (err, resp, body) => res.send(body));
+        }`,
+        'app/routes/research.js'
+    );
+    assert.deepEqual(
+        nodeGoatSsrf.data.findings.map((f) => [f.ruleId, f.brickId, f.importPath]),
+        [['unvalidated-outbound-ssrf', 'security', '@krusch/toolkit/security']]
+    );
+
+    const tsWebhookSsrf = auditBoilerplateText(
+        `export async function triggerWebhook(req: Request, res: Response) {
+            const { webhookUrl: target }: { webhookUrl: string } = req.body;
+            const r = await fetch(target as string, { method: 'POST' });
+            return res.json({ status: r.status });
+        }`,
+        'src/routes/webhooks.ts'
+    );
+    assert.equal(tsWebhookSsrf.data.findings[0]?.ruleId, 'unvalidated-outbound-ssrf');
+
+    const pyFastApiSsrf = auditBoilerplateText(
+        `import httpx
+from fastapi import FastAPI
+app = FastAPI()
+
+@app.get("/proxy")
+async def proxy_fetch(target_url: str):
+    async with httpx.AsyncClient() as client:
+        return (await client.get(target_url)).text
+`,
+        'app/routes/proxy.py'
+    );
+    assert.deepEqual(
+        pyFastApiSsrf.data.findings.map((f) => [f.ruleId, f.brickId, f.importPath]),
+        [['unvalidated-outbound-ssrf', 'python_security', 'krusch_toolkit.security']]
+    );
+
+    // Benign fixed-origin path param, non-HTTP .fetch() method, string-literal docs, and safeFetch must NOT false-positive
+    assert.equal(
+        auditBoilerplateText(
+            `const res = await fetch(\`https://api.stripe.com/v1/charges/\${req.params.id}\`);
+             const cached = cache.fetch(req.query.url);
+             const doc = "Never call fetch(req.query.url) directly";`,
+            'src/billing/safe-origin.js'
+        ).data.clean,
+        true
+    );
+    assert.equal(
+        auditBoilerplateText(
+            `import { safeFetch } from '@krusch/toolkit/security';
+             export const proxy = (req) => safeFetch(req.query.url);`,
+            'src/routes/safe-proxy.js'
+        ).data.clean,
+        true
+    );
+    assert.equal(
+        auditBoilerplateText(
+            `from krusch_toolkit.security import validate_outbound_url
+import httpx
+def run(request):
+    target_url = request.query_params.get("url")
+    checked = validate_outbound_url(target_url)
+    return httpx.get(target_url)
+`,
+            'app/safe_proxy.py'
+        ).data.clean,
+        true
+    );
+
+    // 4. Rule 16: Hardcoded JWT / session / cookie secret fallbacks
+    const jwtFallbackSlop = auditBoilerplateText(
+        `export const generateToken = (id: number) =>
+            jwt.sign({ user: { id, role: 'member' } }, process.env.JWT_SECRET || 'superSecret', { expiresIn: '60d' });`,
+        'src/auth/token.utils.ts'
+    );
+    assert.deepEqual(
+        jwtFallbackSlop.data.findings.map((f) => [f.ruleId, f.brickId, f.importPath]),
+        [['hardcoded-auth-secret-fallback', 'auth', '@krusch/toolkit/auth']]
+    );
+
+    const jwtLiteralSignSlop = auditBoilerplateText(
+        `const token = jwt.sign({ sub: userId, scopes: ['read', 'write'] }, 'dev-hardcoded-secret', { expiresIn: '1h' });`,
+        'src/auth/sign.js'
+    );
+    assert.equal(jwtLiteralSignSlop.data.findings[0]?.ruleId, 'hardcoded-auth-secret-fallback');
+
+    const nestedSessionSecretSlop = auditBoilerplateText(
+        `app.use(session({ cookie: { httpOnly: true, path: '/' }, secret: 'session_cookie_secret', resave: false }));`,
+        'src/server.js'
+    );
+    assert.equal(nestedSessionSecretSlop.data.findings[0]?.ruleId, 'hardcoded-auth-secret-fallback');
+
+    // Proper env-required secret without literal fallback and storeOptions nested secret must NOT false-positive
+    assert.equal(
+        auditBoilerplateText(
+            `if (!process.env.JWT_SECRET) throw new Error('Missing JWT_SECRET');
+             const token = jwt.sign({ sub: id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+             app.use(session({ storeOptions: { secret: 'nested-non-top' }, secret: process.env.SESSION_SECRET }));`,
+            'src/auth/strict.js'
+        ).data.clean,
+        true
+    );
+
+    // 5. scoreLegoBrickCoverage supports { path, content } aliases + krusch-lego audit --json exposes coverage telemetry
+    const aliasCoverage = scoreLegoBrickCoverage([
+        { path: 'src/proxy.js', content: `export const go = (req) => fetch(req.query.url);` },
+        { path: 'src/auth.js', content: `import { createAuth } from '@krusch/toolkit/auth';\nexport const a = createAuth({ secret: process.env.JWT_SECRET });` }
+    ]);
+    assert.equal(aliasCoverage.data.scannedFiles, 2);
+    assert.equal(aliasCoverage.data.sealedFiles, 1);
+    assert.equal(aliasCoverage.data.flaggedFiles, 1);
+    assert.deepEqual(aliasCoverage.data.sealedBrickIds, ['auth']);
+    assert.deepEqual(aliasCoverage.data.recommendedBrickIds, ['security']);
+    assert.equal(aliasCoverage.data.sealedCoverageRatio, 0.5);
+    assert.equal(aliasCoverage.data.breakerTripped, true);
+
+    const tmpAuditDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lego-audit-v181-'));
+    try {
+        fs.writeFileSync(
+            path.join(tmpAuditDir, 'route.js'),
+            `import { safeFetch } from '@krusch/toolkit/security';\nexport const handler = (req) => safeFetch(req.query.url);\n`,
+            'utf8'
+        );
+        const lines = [];
+        const { exitCode, payload } = await runCli(['audit', tmpAuditDir, '--json'], {
+            stdout: (l) => lines.push(l),
+            stderr: () => {}
+        });
+        assert.equal(exitCode, 0);
+        assert.equal(payload.data.clean, true);
+        assert.equal(payload.data.sealedFiles, 1);
+        assert.deepEqual(payload.data.sealedBrickIds, ['security']);
+        assert.equal(payload.data.sealedCoverageRatio, 1);
+        assert.equal(payload.data.breakerTripped, false);
+        assert.equal(payload.data.estimatedAuditTokensSaved, 850);
+    } finally {
+        fs.rmSync(tmpAuditDir, { recursive: true, force: true });
+    }
+
+    // 6. Adversarial 256KB single-line ReDoS immunity across Rules 14, 15, and 16
+    const adv256k = `${'findMany({ a: 1, skip: x, '.repeat(2500)} req.query.url; jwt.sign({ a: 1, b: 2 }, envSecret); session({ cookie: { a: 1 }, resave: false });`;
+    const tStart = performance.now();
+    const res256k = auditBoilerplateText(adv256k, 'src/bundle.js');
+    const elapsed256k = performance.now() - tStart;
+    assert.equal(res256k.ok, true);
+    assert.ok(elapsed256k < 150, `Expected <150ms linear scan on ${adv256k.length}-char adversarial input, got ${elapsed256k.toFixed(2)}ms`);
+});
+
+

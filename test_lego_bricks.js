@@ -1500,7 +1500,7 @@ test('INV-LEGO-11: Strict TypeScript .d.ts coverage, 1:1 root export parity, and
     assert.ok(runtimeKeys.length >= 225, `Expected >=225 root exports, got ${runtimeKeys.length}`);
 
     const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
-    assert.equal(pkg.version, '1.8.0');
+    assert.equal(pkg.version, '1.8.1');
     assert.equal(pkg.types, './types/index.d.ts');
     for (const [subpath, target] of Object.entries(pkg.exports)) {
         assert.equal(typeof target, 'object', `Export ${subpath} must map { types, default }`);

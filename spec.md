@@ -635,3 +635,30 @@ Promotes the 2 empirical Python `CANDIDATE_MEETS_RULE_OF_3` clusters discovered 
   - `lib/package.json` (`v1.8.0`, `./idempotency`, `./audit-log`, `./rbac`, `./pagination` subpaths), `lib/index.js`, `lib/types/index.d.ts`
   - `lib/catalog.js` (`RUNTIME_BRICKS` -> `39` bricks + deterministic $O(N)$ `auditBoilerplateText` Slop-Breaker rules `raw-idempotency-key`, `mutable-audit-ledger`, `raw-tenant-rbac`, and `unsafe-pagination-cursor` recommending `idempotency`, `audit-log`, `rbac`, and `pagination` in `scoreLegoBrickCoverage`), `lib/README.md`, `lib/test_lego_bricks.js`, `lib/test_wave5_bricks.js`, `lib/test_wave7_bricks.js`
 
+---
+
+## Wave 8 — General-Purpose Legacy & Security Slop-Breaker Hardening (`INV-LEGO-35`, `v1.8.1`)
+
+Extends `@krusch/toolkit/catalog` (`auditBoilerplateText`, `scoreLegoBrickCoverage`) and `krusch-lego audit` with deterministic, ReDoS-free $O(N)$ (`<1ms`/file) legacy ORM pagination, SSRF, and hardcoded auth-secret detectors mapped to existing sealed runtime bricks while preserving 100% zero-`node:*` isomorphic purity in `lib/catalog.js`.
+
+- **`INV-LEGO-35` (ORM Pagination, Outbound SSRF & Auth-Secret Slop-Breaker Detectors + Coverage Alias Parity)**:
+  - **Runtime Purity**: `lib/catalog.js` MUST maintain zero outbound runtime `import` / `require` dependencies (`0` resolved module specifiers under V8 ESM loading; `node:*` strings appear only inside rendered `PROJECT_ARCHETYPES` starter templates) so it executes unmodified in Node 22, Cloudflare Workers, and browsers.
+  - **Rule 14 Extension (`unsafe-pagination-cursor` $\rightarrow$ `pagination` / `@krusch/toolkit/pagination`)**:
+    - When `!isPython`, `!usesToolkitPagination`, and `!/\bMath\.min\s*\(/.test(codeOnly)`, also flag:
+      1. Bounded-window (`<= 800` chars) Prisma `.findMany({...})` calls combining non-literal `skip:` with dynamic `take:` (`limit`, `take`, `pageSize`, `perPage`, `per_page`).
+      2. Chained MongoDB/Mongoose `.skip(...).limit(...)` or `.limit(...).skip(...)` calls referencing `req.query` / `request.query` with non-literal `.limit(...)`.
+      3. Unclamped HTTP controller coercions `(?:Number|parseInt)(req.query.limit|take|pageSize|per_page)` paired with `req.query.(offset|skip|page)`.
+  - **Rule 15 (`unvalidated-outbound-ssrf` $\rightarrow$ `security` / `@krusch/toolkit/security` or `python_security` / `krusch_toolkit.security`)**:
+    - When lacking `@krusch/toolkit/security` (`safeFetch`, `validateOutboundUrl`, `isPrivateOrReservedIp`) in JS/TS or `krusch_toolkit.security` (`validate_outbound_url`, `is_private_or_reserved_ip`) in Python, inspect string-scrubbed code (`stripStringBodiesForYamlAudit`) to flag user-controlled target URLs passed to outbound HTTP clients:
+      1. Direct JS/TS request inputs (`req.query` / `req.body` / `req.params`, `request.query|body|params`, `c.req.query(...)`, or unprefixed template literals `` `${req.query...` ``) passed as the target URL to standalone `fetch(...)`, `axios(...)`/`axios.<verb>(...)`, `needle.<verb>(...)`, `got(...)`/`got.<verb>(...)`, `http(s).get/request(...)`, or `axios({ url: ... })` (excluding fixed-origin URLs like `` fetch(`https://api.example.com/${req.params.id}`) `` and non-HTTP `.fetch(...)` methods).
+      2. Single-file local variable taint (`const url = req.query.url + ...` or destructuring URL-named keys `{ url, webhookUrl, callbackUrl, targetUrl, endpointUrl, proxyUrl, feedUrl, imageUrl, sourceUrl, remoteUrl, uri, href } = req.query|body|params`) passed as the first URL argument to those HTTP clients.
+      3. Python `httpx` / `requests` / `urllib.request.urlopen` calls receiving `request.query_params` / `request.args` / `request.form` directly, via local URL variable taint, or via FastAPI `@app/@router` route parameters (`url: str`, `target_url: str`, `webhook_url: str`, `callback_url: str`, `proxy_url: str`).
+  - **Rule 16 (`hardcoded-auth-secret-fallback` $\rightarrow$ `auth` / `@krusch/toolkit/auth`)**:
+    - When `!isPython` and lacking `@krusch/toolkit/auth` (`createAuth`), inspect string-scrubbed code (`stripStringBodiesForYamlAudit`) to flag hardcoded secret literals ($\ge 4$ chars, zero template interpolations):
+      1. `process.env.(JWT_SECRET|AUTH_SECRET|SESSION_SECRET|COOKIE_SECRET|TOKEN_SECRET|APP_SECRET|SIGNING_SECRET) || '<literal>'` (or `?? '<literal>'`).
+      2. `jwt.(sign|verify)(payload, '<literal>', ...)` (2nd top-level argument scanned via bounded balanced delimiters).
+      3. Top-level `secret: '<literal>'` inside `session({...})` / `cookieSession({...})` / `expressjwt({...})` / `jwt({...})` (bounded balanced-brace scan) or config properties `jwtSecret` / `cookieSecret` / `sessionSecret` assigned hardcoded string literals.
+  - **`scoreLegoBrickCoverage` Entry Normalization & `krusch-lego audit` Telemetry**:
+    - `scoreLegoBrickCoverage` accepts both `{ filePath, code }` and `{ path, content }` object entries (`LegoCoverageFileEntry` in `lib/types/catalog.d.ts`).
+    - `lib/bin/krusch-lego.js` `audit` computes `scoreLegoBrickCoverage` across scanned files and attaches `sealedFiles`, `sealedBrickIds`, `sealedTouchpoints`, `recommendedBrickIds`, `sealedCoverageRatio`, `breakerTripped`, and `estimatedAuditTokensSaved` onto `payload.data` while preserving `target`, `scannedFiles`, `flaggedFiles`, `clean`, and `findings`.
+

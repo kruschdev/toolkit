@@ -61,7 +61,9 @@ export declare function auditBoilerplateText(
 
 export interface LegoCoverageFileEntry {
     filePath?: string;
+    path?: string;
     code?: string;
+    content?: string;
 }
 
 export interface ScoreLegoBrickCoverageOptions {

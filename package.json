@@ -1,6 +1,6 @@
 {
     "name": "@krusch/toolkit",
-    "version": "1.8.0",
+    "version": "1.8.1",
     "description": "Shared Lego bricks, TypeScript declarations (.d.ts), & zero-LLM starter blueprints for homelab projects — HTTP, Edge/Workers, Webhooks, Security/SSRF/RateLimit, Idempotency, AuditLog, RBAC/Tenancy, Pagination, Schema, Safe YAML, Upload/MIME, Cascade/CircuitBreaker, Audio/Whisper/TTS, CLI, SSE, MCP, PG/pgvector, node:sqlite/FTS5/RRF, React UI, LLM, embeddings, Raw-RAG, Lego Scout",
     "type": "module",
     "main": "index.js",
