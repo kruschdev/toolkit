@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   node-toolkit:
-    name: Node.js 22 (@krusch/toolkit v1.8.0 & Zero-Leak Gate)
+    name: Node.js 22 (@krusch/toolkit v1.7.0 & Zero-Leak Gate)
     runs-on: ubuntu-latest
     env:
       PUPPETEER_SKIP_DOWNLOAD: 'true'

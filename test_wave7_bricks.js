@@ -341,13 +341,52 @@ test('INV-LEGO-32: @krusch/toolkit/audit-log enforces SHA-256/HMAC hash chains, 
 
         const reopened = createAuditLog({ sqlitePath: dbPath });
         assert.equal(reopened.verify({ expectedTailHash: savedTail }).ok, true);
-        const eNext = reopened.append({ tenantId: 'org_9', actor: 'auditor', action: 'ledger.seal' });
+        const eNext = reopened.append({
+            tenantId: 'org_9',
+            actor: 'auditor',
+            action: 'ledger.seal',
+            metadata: {
+                sealedAt: new Date('2026-01-01T00:00:00.000Z'),
+                flags: ['primary', undefined],
+                delta: -0
+            }
+        });
+        assert.equal(eNext.ok, true);
         assert.equal(eNext.data.seq, 3);
+        assert.equal(eNext.data.entry.metadata.sealedAt, '2026-01-01T00:00:00.000Z');
+        assert.deepEqual(eNext.data.entry.metadata.flags, ['primary', null]);
+        assert.equal(Object.is(eNext.data.entry.metadata.delta, 0), true);
+        assert.equal(verifyAuditChain([eNext.data.entry], { expectedGenesisHash: savedTail, startSeq: 3 }).ok, true);
         assert.equal(reopened.verify().data.verifiedCount, 3);
+
+        class CustomMetaHolder {
+            constructor() {
+                this.safe = 'ok';
+                this.constructor = 'forged';
+            }
+        }
+        const badNested = reopened.append({
+            tenantId: 'org_9',
+            actor: 'auditor',
+            action: 'ledger.bad_meta',
+            metadata: { nested: new CustomMetaHolder() }
+        });
+        assert.equal(badNested.ok, false);
+        assert.equal(badNested.error.code, 'AUDIT_INVALID_ENTRY');
         reopened.close();
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+
+    // In-memory Date / undefined-array metadata round-trip parity
+    const memDateAudit = createAuditLog();
+    const memDateEntry = memDateAudit.append({
+        actor: 'svc_cron',
+        action: 'job.tick',
+        metadata: { ranAt: new Date('2026-02-02T12:00:00.000Z'), slots: [1, undefined, 3] }
+    });
+    assert.equal(memDateEntry.ok, true);
+    assert.equal(memDateAudit.verify().ok, true);
 
     assert.equal(typeof computeAuditEntryHash, 'function');
 });

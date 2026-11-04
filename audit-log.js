@@ -70,28 +70,22 @@ function hasForbiddenPrototypeKeys(value, seen = new WeakSet()) {
     }
     seen.add(value);
 
-    if (Array.isArray(value)) {
-        for (let i = 0; i < value.length; i++) {
-            if (hasForbiddenPrototypeKeys(value[i], seen)) {
+    try {
+        const ownNames = Object.getOwnPropertyNames(value);
+        for (let i = 0; i < ownNames.length; i++) {
+            const key = ownNames[i];
+            if (FORBIDDEN_OBJECT_KEYS.has(key)) {
+                return true;
+            }
+            if (Array.isArray(value) && key === 'length') {
+                continue;
+            }
+            if (hasForbiddenPrototypeKeys(value[key], seen)) {
                 return true;
             }
         }
-        return false;
-    }
-
-    if (!isPlainObject(value)) {
-        return false;
-    }
-
-    const ownNames = Object.getOwnPropertyNames(value);
-    for (let i = 0; i < ownNames.length; i++) {
-        const key = ownNames[i];
-        if (FORBIDDEN_OBJECT_KEYS.has(key)) {
-            return true;
-        }
-        if (hasForbiddenPrototypeKeys(value[key], seen)) {
-            return true;
-        }
+    } catch {
+        return true;
     }
     return false;
 }
@@ -111,15 +105,33 @@ function constantTimeHexEqual(actual, expectedHex64) {
 }
 
 function deepFreezeClone(value) {
-    if (value === null || typeof value !== 'object') {
+    if (value === null || value === undefined) {
         return value;
     }
+    if (typeof value === 'number') {
+        return Object.is(value, -0) ? 0 : value;
+    }
+    if (typeof value !== 'object') {
+        return value;
+    }
+    if (
+        value instanceof Boolean ||
+        value instanceof Number ||
+        value instanceof String
+    ) {
+        const unboxed = value.valueOf();
+        return typeof unboxed === 'number' && Object.is(unboxed, -0) ? 0 : unboxed;
+    }
+    if (value instanceof Date) {
+        const ms = value.getTime();
+        return Number.isFinite(ms) ? value.toISOString() : null;
+    }
     if (Array.isArray(value)) {
-        const arr = value.map((item) => deepFreezeClone(item));
+        const arr = value.map((item) => (item === undefined ? null : deepFreezeClone(item)));
         return Object.freeze(arr);
     }
     const out = {};
-    const keys = Object.keys(value);
+    const keys = Object.keys(value).sort();
     for (let i = 0; i < keys.length; i++) {
         const k = keys[i];
         if (!FORBIDDEN_OBJECT_KEYS.has(k) && value[k] !== undefined) {
@@ -1109,11 +1121,17 @@ export function createAuditLog(options = {}) {
         }
 
         const metaCanonRes = canonicalizeAuditPayload(preCheck.normalized.metadata, {
+            maxDepth: 31,
             tool: callTool,
         });
         if (!metaCanonRes.ok) {
             return metaCanonRes;
         }
+        const canonicalMetadata = JSON.parse(metaCanonRes.data.canonicalJson);
+        const normalizedBase = {
+            ...preCheck.normalized,
+            metadata: canonicalMetadata,
+        };
 
         if (!sqliteDb) {
             if (memoryEntries.length >= maxEntries) {
@@ -1131,7 +1149,7 @@ export function createAuditLog(options = {}) {
             const prevHash = prevEntry ? prevEntry.entryHash : GENESIS_AUDIT_HASH;
 
             const hashRes = computeAuditEntryHash(
-                { ...preCheck.normalized, seq: nextSeq, prevHash },
+                { ...normalizedBase, seq: nextSeq, prevHash },
                 { hmacSecret, tool: callTool }
             );
             if (!hashRes.ok) {
@@ -1139,7 +1157,7 @@ export function createAuditLog(options = {}) {
             }
 
             const entry = createFrozenAuditEntry({
-                ...preCheck.normalized,
+                ...normalizedBase,
                 seq: nextSeq,
                 prevHash,
                 entryHash: hashRes.data.entryHash,
@@ -1182,7 +1200,7 @@ export function createAuditLog(options = {}) {
             const prevHash = tailRow ? String(tailRow.entry_hash) : GENESIS_AUDIT_HASH;
 
             const hashRes = computeAuditEntryHash(
-                { ...preCheck.normalized, seq: nextSeq, prevHash },
+                { ...normalizedBase, seq: nextSeq, prevHash },
                 { hmacSecret, tool: callTool }
             );
             if (!hashRes.ok) {
@@ -1199,12 +1217,12 @@ export function createAuditLog(options = {}) {
                 )
                 .run(
                     nextSeq,
-                    preCheck.normalized.timestamp,
-                    preCheck.normalized.tenantId,
-                    preCheck.normalized.actor,
-                    preCheck.normalized.action,
-                    preCheck.normalized.resource,
-                    preCheck.normalized.outcome,
+                    normalizedBase.timestamp,
+                    normalizedBase.tenantId,
+                    normalizedBase.actor,
+                    normalizedBase.action,
+                    normalizedBase.resource,
+                    normalizedBase.outcome,
                     metaCanonRes.data.canonicalJson,
                     prevHash,
                     hashRes.data.entryHash
@@ -1214,7 +1232,7 @@ export function createAuditLog(options = {}) {
             committed = true;
 
             const entry = createFrozenAuditEntry({
-                ...preCheck.normalized,
+                ...normalizedBase,
                 seq: nextSeq,
                 prevHash,
                 entryHash: hashRes.data.entryHash,
