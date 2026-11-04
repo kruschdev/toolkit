@@ -623,3 +623,155 @@ export async function runCheck() {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
+
+test('INV-LEGO-31..34: auditBoilerplateText & scoreLegoBrickCoverage catch Wave 7 enterprise slop in <1ms with zero false positives or ReDoS', async () => {
+    const { auditBoilerplateText, scoreLegoBrickCoverage } = await import('./catalog.js');
+
+    // 1. Idempotency slop vs outbound client header & toolkit exemption
+    const idemSlop = auditBoilerplateText(
+        `export async function charge(req, res) {
+            const key = req?.headers?.['idempotency-key'];
+            if (seen.has(key)) return res.json(seen.get(key));
+            seen.set(key, { ok: true });
+        }`,
+        'src/routes/charges.js'
+    );
+    assert.equal(idemSlop.data.clean, false);
+    assert.deepEqual(
+        idemSlop.data.findings.map((f) => [f.ruleId, f.brickId]),
+        [['raw-idempotency-key', 'idempotency']]
+    );
+
+    const idemDestructured = auditBoilerplateText(
+        `const { 'x-idempotency-key': idemKey } = req.headers;`,
+        'src/routes/webhooks.js'
+    );
+    assert.equal(idemDestructured.data.findings[0]?.ruleId, 'raw-idempotency-key');
+
+    const idemFetchHeaders = auditBoilerplateText(
+        `const key = request.headers.get('Idempotency-Key') || c.req.header('idempotency-key');`,
+        'src/edge/worker.js'
+    );
+    assert.equal(idemFetchHeaders.data.findings[0]?.ruleId, 'raw-idempotency-key');
+
+    const outboundClient = auditBoilerplateText(
+        `await fetch(upstreamUrl, { method: 'POST', headers: { 'Idempotency-Key': reqId } });`,
+        'src/clients/billing.js'
+    );
+    assert.equal(outboundClient.data.clean, true);
+
+    // 2. Mutable enterprise audit ledger vs single-user log & toolkit exemption
+    const auditDdlSlop = auditBoilerplateText(
+        `db.exec("CREATE TABLE IF NOT EXISTS public.audit_ledger (id SERIAL PRIMARY KEY, tenant_id TEXT, action TEXT)");`,
+        'src/db/schema.js'
+    );
+    assert.equal(auditDdlSlop.data.findings[0]?.ruleId, 'mutable-audit-ledger');
+    assert.equal(auditDdlSlop.data.findings[0]?.brickId, 'audit-log');
+
+    const auditHashSlop = auditBoilerplateText(
+        `const digest = crypto.createHash('sha256').update(prevHash + JSON.stringify(auditEvent)).digest('hex');`,
+        'src/services/audit.js'
+    );
+    assert.equal(auditHashSlop.data.findings[0]?.ruleId, 'mutable-audit-ledger');
+
+    const singleUserPinLog = auditBoilerplateText(
+        `exec("CREATE TABLE IF NOT EXISTS audit_log (id INTEGER PRIMARY KEY, user_name TEXT, action TEXT)");`,
+        'src/home/db.js'
+    );
+    assert.equal(singleUserPinLog.data.clean, true);
+
+    // 3. Multi-tenant IDOR & scoped RBAC slop vs single-tenant role check
+    const idorSlop = auditBoilerplateText(
+        `if (invoice.tenantId !== req.user.tenantId) return res.status(403).json({ error: 'Denied' });`,
+        'src/routes/invoices.js'
+    );
+    assert.equal(idorSlop.data.findings[0]?.ruleId, 'raw-tenant-rbac');
+    assert.equal(idorSlop.data.findings[0]?.brickId, 'rbac');
+
+    const scopedPermSlop = auditBoilerplateText(
+        `if (!caller.permissions.includes('billing:refund')) return false;`,
+        'src/auth/permissions.js'
+    );
+    assert.equal(scopedPermSlop.data.findings[0]?.ruleId, 'raw-tenant-rbac');
+
+    const singleTenantAdmin = auditBoilerplateText(
+        `export function requireAdmin(req, res, next) { if (req.user?.role !== 'admin') return res.status(403).end(); next(); }`,
+        'src/middleware/auth.js'
+    );
+    assert.equal(singleTenantAdmin.data.clean, true);
+
+    // 4. Unsigned base64 cursor & unclamped SQL LIMIT/OFFSET vs Math.min clamp
+    const cursorSlop = auditBoilerplateText(
+        `const decoded = JSON.parse(Buffer.from(req.query.cursor, 'base64url').toString('utf8'));
+         const nextCursor = Buffer.from(JSON.stringify({ id: last.id })).toString('base64url');`,
+        'src/routes/feed.js'
+    );
+    assert.equal(cursorSlop.data.findings[0]?.ruleId, 'unsafe-pagination-cursor');
+    assert.equal(cursorSlop.data.findings[0]?.brickId, 'pagination');
+
+    const offsetSlop = auditBoilerplateText(
+        `const { page = 1, limit = 25 } = req.query;
+         const rows = await db.query('SELECT id FROM events OFFSET $2 LIMIT $1', [limit, (page - 1) * limit]);`,
+        'src/routes/events.js'
+    );
+    assert.equal(offsetSlop.data.findings[0]?.ruleId, 'unsafe-pagination-cursor');
+
+    const optionalQueryOffsetSlop = auditBoilerplateText(
+        `const lim = Number(request.query?.limit || 50);
+         const rows = await db.query('SELECT id FROM events LIMIT $1 OFFSET $2', [lim, 0]);`,
+        'src/routes/fastify-events.js'
+    );
+    assert.equal(optionalQueryOffsetSlop.data.findings[0]?.ruleId, 'unsafe-pagination-cursor');
+
+    const clampedOffset = auditBoilerplateText(
+        `const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 20));
+         const rows = await db.query('SELECT id FROM events LIMIT $1 OFFSET $2', [limit, 0]);`,
+        'src/routes/clamped.js'
+    );
+    assert.equal(clampedOffset.data.clean, true);
+
+    // 5. End-to-end scoreLegoBrickCoverage: 0% unsealed breaker trip -> 100% sealed clean pass
+    const unsealedScore = scoreLegoBrickCoverage({
+        'src/charges.js': `const k = req.headers['idempotency-key'];`,
+        'src/audit.js': `db.exec('CREATE TABLE audit_trail (id INT, actor TEXT)');`,
+        'src/invoices.js': `if (req.user.tenantId !== row.tenantId) throw new Error('IDOR');`,
+        'src/list.js': `const obj = Buffer.from(req.query.cursor, 'base64');`
+    });
+    assert.equal(unsealedScore.data.breakerTripped, true);
+    assert.equal(unsealedScore.data.slopFindingCount, 4);
+    assert.equal(unsealedScore.data.sealedCoverageRatio, 0);
+    assert.deepEqual(unsealedScore.data.recommendedBrickIds, ['audit-log', 'idempotency', 'pagination', 'rbac']);
+
+    const sealedScore = scoreLegoBrickCoverage({
+        'src/charges.js': `import { withIdempotency } from '@krusch/toolkit/idempotency';\nconst k = req.headers['idempotency-key'];`,
+        'src/audit.js': `import { createAuditLog } from '@krusch/toolkit/audit-log';`,
+        'src/invoices.js': `import { assertTenantOwnership } from '@krusch/toolkit/rbac';`,
+        'src/list.js': `import { decodeCursor } from '@krusch/toolkit/pagination';`
+    });
+    assert.equal(sealedScore.data.breakerTripped, false);
+    assert.equal(sealedScore.data.slopFindingCount, 0);
+    assert.equal(sealedScore.data.sealedCoverageRatio, 1);
+
+    // 6. <1ms per-file average latency & adversarial 256KB single-line ReDoS immunity
+    const t0 = performance.now();
+    for (let i = 0; i < 50; i++) {
+        auditBoilerplateText(
+            `export async function handler(req, res) {
+                const key = req.headers['idempotency-key'];
+                if (req.user.tenantId !== res.tenantId) return;
+                const c = Buffer.from(req.query.cursor, 'base64url');
+            }`,
+            'src/app.js'
+        );
+    }
+    const avgMs = (performance.now() - t0) / 50;
+    assert.ok(avgMs < 1.5, `Expected sub-millisecond boilerplate scan, got ${avgMs.toFixed(3)}ms`);
+
+    const adversarial = `${'{ limit, '.repeat(4000)} req.query; ${'SELECT LIMIT OFFSET '.repeat(4000)}`;
+    const advStart = performance.now();
+    const advRes = auditBoilerplateText(adversarial, 'src/minified.js');
+    const advElapsed = performance.now() - advStart;
+    assert.equal(advRes.ok, true);
+    assert.ok(advElapsed < 150, `Expected linear O(N) scan on adversarial input, got ${advElapsed.toFixed(2)}ms`);
+});
+

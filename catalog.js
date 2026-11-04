@@ -3272,6 +3272,131 @@ export function auditBoilerplateText(code = '', filePath = '') {
         });
     }
 
+    // 11. Hand-rolled inbound Idempotency-Key handling without @krusch/toolkit/idempotency
+    if (!isPython && /idempotency-key/i.test(cleaned)) {
+        const hasRawIdempotency =
+            /\b(?:req|request)\s*(?:\??\.\s*headers\s*(?:(?:\?\.\s*)?\[\s*['"`](?:x-)?idempotency-key['"`]\s*\]|\??\.\s*get\s*\(\s*['"`](?:x-)?idempotency-key['"`]\s*\))|\??\.\s*(?:get|header)\s*\(\s*['"`](?:x-)?idempotency-key['"`]\s*\))/i.test(
+                cleaned
+            ) ||
+            /\{[^{}\n]{0,120}['"`](?:x-)?idempotency-key['"`]\s*:\s*[A-Za-z_$][\w$]*[^{}\n]{0,120}\}\s*=\s*(?:req|request)\??\.headers\b/i.test(
+                cleaned
+            );
+        const usesToolkitIdempotency =
+            /@krusch\/toolkit\/idempotency\b|\b(?:createIdempotencyStore|withIdempotency|createIdempotencyMiddleware|normalizeIdempotencyKey|computePayloadFingerprint)\b/.test(
+                cleaned
+            );
+        if (hasRawIdempotency && !usesToolkitIdempotency) {
+            findings.push({
+                ruleId: 'raw-idempotency-key',
+                brickId: 'idempotency',
+                importPath: '@krusch/toolkit/idempotency',
+                severity: 'warn',
+                message: 'Hand-rolled Idempotency-Key request handling detected; use createIdempotencyStore, withIdempotency, or createIdempotencyMiddleware from @krusch/toolkit/idempotency.'
+            });
+        }
+    }
+
+    // 12. Mutable enterprise SQL audit tables or custom SHA-256 audit hash chains without @krusch/toolkit/audit-log
+    if (!isPython && /(?:audit|ledger)/i.test(cleaned)) {
+        const hasMutableAuditSql =
+            (/\bCREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+(?:[`"\[]?[a-z_][\w]*[`"\]]?\.)?[`"\[]?(?:audit_ledger|audit_trail|compliance_audit\w*)\b/i.test(
+                cleaned
+            ) ||
+                /\bCREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+(?:[`"\[]?[a-z_][\w]*[`"\]]?\.)?[`"\[]?audit_logs?\b[^;]{0,600}\b(?:tenant_id|org_id|organization_id|actor_id|actor)\b/i.test(
+                    cleaned
+                )) &&
+            !/\bAUDIT_LEDGER_IMMUTABLE\b/.test(cleaned);
+        const hasHandRolledAuditChain =
+            /\bcreateHash\s*\(\s*['"`]sha256['"`]\s*\)/.test(cleaned) &&
+            /\b(?:prevHash|prev_hash)\b/.test(cleaned);
+        const usesToolkitAuditLog =
+            /@krusch\/toolkit\/audit-log\b|\b(?:createAuditLog|computeAuditEntryHash|verifyAuditChain|canonicalizeAuditPayload|GENESIS_AUDIT_HASH)\b/.test(
+                cleaned
+            );
+        if ((hasMutableAuditSql || hasHandRolledAuditChain) && !usesToolkitAuditLog) {
+            findings.push({
+                ruleId: 'mutable-audit-ledger',
+                brickId: 'audit-log',
+                importPath: '@krusch/toolkit/audit-log',
+                severity: 'warn',
+                message: 'Mutable or hand-rolled audit ledger detected; use createAuditLog and verifyAuditChain from @krusch/toolkit/audit-log for canonical SHA-256/HMAC chaining and SQLite immutability triggers.'
+            });
+        }
+    }
+
+    // 13. Hand-rolled multi-tenant IDOR / scoped RBAC checks without @krusch/toolkit/rbac
+    if (!isPython && /\b(?:tenantId|tenant_id|permissions)\b/.test(cleaned)) {
+        const hasTenantContext = /\b(?:tenantId|tenant_id)\b/.test(cleaned);
+        const hasRawTenantIdor =
+            /\b(?:(?:req|request)\??\.(?:user|auth)|user|auth|session|caller)\??\.(?:tenantId|tenant_id)\s*(?:!==|===|!=|==)/.test(
+                cleaned
+            ) ||
+            /(?:!==|===|!=|==)\s*(?:(?:req|request)\??\.(?:user|auth)|user|auth|session|caller)\??\.(?:tenantId|tenant_id)\b/.test(
+                cleaned
+            );
+        const hasRawTenantRoleCheck =
+            hasTenantContext &&
+            (/\b(?:req|request)\??\.(?:user|auth)\??\.(?:role\b\s*(?:===|!==|==|!=)|roles\??\.includes\s*\()/.test(
+                cleaned
+            ) ||
+                /\.includes\s*\(\s*(?:req|request)\??\.(?:user|auth)\??\.role\s*\)/.test(cleaned));
+        const hasRawScopedPermissionCheck =
+            /\b(?:user|auth|subject|caller|session)\??\.permissions\??\.includes\s*\(\s*['"`][a-z0-9_-]+:[a-z0-9_*-]+['"`]\s*\)/i.test(
+                cleaned
+            );
+        const usesToolkitRbac =
+            /@krusch\/toolkit\/rbac\b|\b(?:createRbacPolicy|evaluateAccess|assertTenantOwnership|createRbacGuard|matchPermissionPattern)\b/.test(
+                cleaned
+            );
+        if ((hasRawTenantIdor || hasRawTenantRoleCheck || hasRawScopedPermissionCheck) && !usesToolkitRbac) {
+            findings.push({
+                ruleId: 'raw-tenant-rbac',
+                brickId: 'rbac',
+                importPath: '@krusch/toolkit/rbac',
+                severity: 'warn',
+                message: 'Hand-rolled RBAC or multi-tenant IDOR check detected; use createRbacPolicy, evaluateAccess, assertTenantOwnership, or createRbacGuard from @krusch/toolkit/rbac.'
+            });
+        }
+    }
+
+    // 14. Unsigned base64 pagination cursors or unclamped query-param SQL LIMIT/OFFSET without @krusch/toolkit/pagination
+    if (!isPython) {
+        const hasUnsignedBase64Cursor =
+            /\b(?:cursor|nextCursor|next_cursor)\b/i.test(cleaned) &&
+            (/\bBuffer\.from\s*\([^()\n]{0,120}\bcursor\b[^()\n]{0,40},\s*['"`]base64(?:url)?['"`]\s*\)/i.test(
+                cleaned
+            ) ||
+                /\b(?:nextCursor|next_cursor)\s*=\s*(?:Buffer\.from\s*\([^;\n]{0,160}\.toString\s*\(\s*['"`]base64(?:url)?['"`]\s*\)|btoa\s*\()/i.test(
+                    cleaned
+                ) ||
+                /\b(?:atob|btoa)\s*\([^()\n]{0,80}\bcursor\b/i.test(cleaned)) &&
+            !/\b(?:createHmac|timingSafeEqual)\b/.test(cleaned);
+        const hasUnclampedQuerySqlOffset =
+            /(?:req|request)\??\.query\b|\bsearchParams\b/.test(cleaned) &&
+            /\bLIMIT\b/i.test(cleaned) &&
+            /\bOFFSET\b/i.test(cleaned) &&
+            /(?:\b(?:(?:req|request)\??\.query|searchParams\.get)\s*(?:\??\.\s*(?:limit|offset|page)\b|\(\s*['"`](?:limit|offset|page)['"`]\s*\))|\{[^{}\n]{0,120}\b(?:limit|offset|page)\b[^{}\n]{0,120}\}\s*=\s*(?:req|request)\??\.query\b)/.test(
+                cleaned
+            ) &&
+            /\b(?:LIMIT\s+(?:\$\d+|\?|:[\w]+|\d+|\$\{[^{}\n]{1,80}\})\s+OFFSET\s+(?:\$\d+|\?|:[\w]+|\d+|\$\{[^{}\n]{1,80}\})|OFFSET\s+(?:\$\d+|\?|:[\w]+|\d+|\$\{[^{}\n]{1,80}\})\s+LIMIT\s+(?:\$\d+|\?|:[\w]+|\d+|\$\{[^{}\n]{1,80}\}))/i.test(
+                cleaned
+            ) &&
+            !/\bMath\.min\s*\(/.test(cleaned);
+        const usesToolkitPagination =
+            /@krusch\/toolkit\/pagination\b|\b(?:clampPageLimit|encodeCursor|decodeCursor|buildKeysetPage|paginateItems)\b/.test(
+                cleaned
+            );
+        if ((hasUnsignedBase64Cursor || hasUnclampedQuerySqlOffset) && !usesToolkitPagination) {
+            findings.push({
+                ruleId: 'unsafe-pagination-cursor',
+                brickId: 'pagination',
+                importPath: '@krusch/toolkit/pagination',
+                severity: 'warn',
+                message: 'Unsigned base64 cursor or unclamped query LIMIT/OFFSET detected; use clampPageLimit, encodeCursor, decodeCursor, or buildKeysetPage from @krusch/toolkit/pagination.'
+            });
+        }
+    }
+
     const clean = findings.length === 0;
     const summary = clean
         ? `No hand-rolled boilerplate detected${normalizedPath ? ` in ${normalizedPath}` : ''}`

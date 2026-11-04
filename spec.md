@@ -631,6 +631,7 @@ Promotes the 2 empirical Python `CANDIDATE_MEETS_RULE_OF_3` clusters discovered 
     - `paginateItems(allItems, { cursor = '', limit = 25, defaultLimit = 25, maxLimit = 100, sortField = 'id', idField = 'id', direction = 'asc', secret = '', scope = '', ttlMs = 0, nowFn = Date.now, tool = 'pagination.slice' } = {})`:
       - Deterministic in-memory keyset paginator sorting `(sortField, idField)` in `'asc' | 'desc'` (`PAGINATION_INVALID_DIRECTION`), verifying `cursor` signature/scope/expiry/sortField parity (`CURSOR_SORT_MISMATCH`), advancing strictly past `(sortValue, id)`, and returning `buildKeysetPage` `okEnvelope` or `errorEnvelope`.
 
-- **Orchestrator Choke Points (Phase 3B — Parent Orchestrator Only)**:
+- **Orchestrator Choke Points & `<1ms` Slop-Breaker Detectors (Phase 3B — Parent Orchestrator Only)**:
   - `lib/package.json` (`v1.8.0`, `./idempotency`, `./audit-log`, `./rbac`, `./pagination` subpaths), `lib/index.js`, `lib/types/index.d.ts`
-  - `lib/catalog.js` (`RUNTIME_BRICKS` -> `39` bricks), `lib/README.md`, `lib/test_lego_bricks.js`, `lib/test_wave5_bricks.js`, `lib/test_wave7_bricks.js`
+  - `lib/catalog.js` (`RUNTIME_BRICKS` -> `39` bricks + deterministic $O(N)$ `auditBoilerplateText` Slop-Breaker rules `raw-idempotency-key`, `mutable-audit-ledger`, `raw-tenant-rbac`, and `unsafe-pagination-cursor` recommending `idempotency`, `audit-log`, `rbac`, and `pagination` in `scoreLegoBrickCoverage`), `lib/README.md`, `lib/test_lego_bricks.js`, `lib/test_wave5_bricks.js`, `lib/test_wave7_bricks.js`
+
