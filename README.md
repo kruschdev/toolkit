@@ -13,6 +13,14 @@
 
 ---
 
+## 🎬 Narrated Architecture Walkthrough — *The Golden Bricks* (`1080p`)
+
+[![Watch @krusch/toolkit: The Golden Bricks Narrated Walkthrough (02:26 · 1080p HD)](docs/assets/krusch-toolkit-video-card.jpg)](https://krusch.dev/assets/video/krusch-toolkit-golden-bricks.mp4)
+
+> ▶️ **[Stream 1080p HD Walkthrough (`02:26`, with audio)](https://krusch.dev/assets/video/krusch-toolkit-golden-bricks.mp4)** · **[Interactive Player on `krusch.dev`](https://krusch.dev/#video-toolkit)** · **[Local MP4 (`21.7 MiB`)](docs/assets/krusch-toolkit-golden-bricks.mp4)** · **[Closed Captions (`.srt`)](docs/assets/krusch-toolkit-golden-bricks.srt)**
+
+---
+
 ## ⚡ Quick Start
 
 ### Node.js / TypeScript (`@krusch/toolkit` v1.8.1)

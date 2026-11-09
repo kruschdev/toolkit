@@ -304,6 +304,21 @@ export function exportPublicToolkitRelease(outputDir, { jsRoot = path.resolve(__
         fs.chmodSync(destPath, fs.statSync(srcPath).mode);
     }
 
+    const docsAssetsDir = path.join(path.resolve(jsRoot), 'docs', 'assets');
+    if (fs.existsSync(docsAssetsDir)) {
+        const destAssetsDir = path.join(targetRoot, 'docs', 'assets');
+        fs.mkdirSync(destAssetsDir, { recursive: true });
+        for (const entry of fs.readdirSync(docsAssetsDir, { withFileTypes: true })) {
+            if (!entry.isFile()) continue;
+            const ext = path.extname(entry.name).toLowerCase();
+            if (!BINARY_EXTENSIONS.has(ext)) continue;
+            const srcAsset = path.join(docsAssetsDir, entry.name);
+            const destAsset = path.join(destAssetsDir, entry.name);
+            fs.copyFileSync(srcAsset, destAsset);
+            fs.chmodSync(destAsset, fs.statSync(srcAsset).mode);
+        }
+    }
+
     if (fs.existsSync(pyRoot)) {
         const pyFiles = collectPublishableFiles(path.resolve(pyRoot));
         for (const srcPath of pyFiles) {

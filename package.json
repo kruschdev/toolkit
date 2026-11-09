@@ -202,6 +202,14 @@
             "types": "./types/polygres.d.ts",
             "default": "./polygres.js"
         },
+        "./hydradb": {
+            "types": "./types/hydradb.d.ts",
+            "default": "./hydradb.js"
+        },
+        "./krusch-git": {
+            "types": "./types/krusch-git.d.ts",
+            "default": "./krusch-git.js"
+        },
         "./hydra-action-flow": {
             "types": "./types/hydra-action-flow.d.ts",
             "default": "./hydra-action-flow.js"

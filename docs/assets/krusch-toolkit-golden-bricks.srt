@@ -1,0 +1,23 @@
+1
+00:00:00,450 --> 00:00:19,707
+80% of every production service is the same infrastructure plumbing. Yet AI coding agents burn massive token budgets rewriting HTTP servers, database pools, webhooks, and auth from scratch—introducing subtle SSRF, pagination, and race-condition bugs every time.
+
+2
+00:00:20,600 --> 00:00:48,208
+@krusch/toolkit replaces regenerated boilerplate with a compounding catalog of pre-audited Golden Bricks across Node 22 TypeScript, Python, React, and Cloudflare Workers—snapping in 5 lines for DNS-pinned SSRF fetch, idempotency locks, SHA-256 audit logs, RBAC, or signed cursors.
+
+3
+00:00:49,133 --> 00:01:16,825
+With krusch-lego, stamping any of 7 production blueprints takes <50ms and 0 LLM tokens. And the catalog never bloats: lego-scout enforces the Rule-of-3, promoting a pattern into a Golden Brick only after it proves itself across >=3 real repositories.
+
+4
+00:01:17,767 --> 00:01:40,747
+Every commit passes through a <1ms, zero-token Slop Breaker. 16 deterministic detectors catch hand-rolled servers, unclamped ORM pagination, outbound SSRF, mutable audit tables, and hardcoded secret fallbacks—redirecting the agent to the exact Golden Brick import.
+
+5
+00:01:41,720 --> 00:02:06,171
+Above infrastructure, @krusch/toolkit ships agent governance bricks: a <25us CPU Cascade Router, Turn-0 workspace grounding (#1 open-weights on DolphinBench at 57.33%), and 3-family referee verification—verified across 104/104 repositories with 100% Golden Brick compliance.
+
+6
+00:02:07,200 --> 00:02:25,468
+Stop paying AI agents to reinvent fragile plumbing. Seal the 80% with Golden Bricks so every build compounds the next. @krusch/toolkit & krusch_toolkit are MIT open source at github.com/kruschdev/toolkit.

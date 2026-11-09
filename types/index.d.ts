@@ -193,6 +193,41 @@ export { EvidenceGroundingEngine, VideoEvidenceSegment } from './evqa-grounding.
 // Polygres Unified Relational, Graph & Vector Client
 export { PolygresClient, createPolygresClient } from './polygres.js';
 
+// HydraDB v2 Sub-Second Context & Temporal Knowledge Graph Client
+export {
+    HydraDbClient,
+    createHydraDbClient,
+    verifyHydraWebhookSignature,
+    buildHydraContextString,
+    DEFAULT_HYDRADB_BASE_URL,
+    HYDRADB_API_VERSION,
+    RETRYABLE_HYDRADB_STATUS_CODES
+} from './hydradb.js';
+export type {
+    HydraWebhookVerifyOptions,
+    HydraWebhookVerifiedData,
+    BuildHydraContextStringOptions,
+    HydraDbClientOptions,
+    HydraMemoryInput,
+    HydraAppKnowledgeInput,
+    HydraQueryOptions,
+    HydraFeedbackOptions
+} from './hydradb.js';
+
+// KruschGit REST & AST Dependency Graph Client (@krusch/toolkit/krusch-git)
+export {
+    KruschGitClient,
+    createKruschGitClient,
+    DEFAULT_KRUSCH_GIT_URL
+} from './krusch-git.js';
+export type {
+    KruschGitClientOptions,
+    KruschGitSearchCodeOptions,
+    KruschGitSearchSymbolsOptions,
+    KruschGitDependencyGraphOptions,
+    KruschGitSymbolGraphResult
+} from './krusch-git.js';
+
 // Hydra-0: Action Flow for Generalist World Modeling & Control
 export {
     HydraWorldModelEngine,
