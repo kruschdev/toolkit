@@ -42,7 +42,12 @@ const IGNORED_DIRS = new Set([
 
 const IGNORED_FILE_NAMES = new Set([
     '.env',
-    '.DS_Store'
+    '.DS_Store',
+    'JEAN_INFLIGHT.md',
+    'JEAN_SRE_INFLIGHT.md',
+    'GEMINI_INFLIGHT.md',
+    'JEAN_SESSION_REVIEW.md',
+    'JEAN_SESSION_HANDOFF.md'
 ]);
 
 const BINARY_EXTENSIONS = new Set([

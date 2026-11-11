@@ -54,3 +54,22 @@ test('INV-LEGO-26: entire @krusch/toolkit repository and public release transfor
         assert.deepEqual(scanTextForLeaks(pub, rel, { strictRelease: true }), []);
     }
 });
+
+test('INV-LEGO-26: verifyDirectoryZeroLeaks ignores ephemeral agent *INFLIGHT.md files', async () => {
+    const os = await import('node:os');
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zero-leak-inflight-'));
+    try {
+        fs.writeFileSync(path.join(tmpDir, 'index.js'), 'export const ok = true;\n', 'utf8');
+        fs.writeFileSync(
+            path.join(tmpDir, 'JEAN_INFLIGHT.md'),
+            `# Jean SRE In-Flight State\n- **Current Focus:** Audit complete for ${'@' + 'homelab'}/lib\n`,
+            'utf8'
+        );
+        const res = verifyDirectoryZeroLeaks(tmpDir, { strictRelease: true });
+        assert.equal(res.ok, true);
+        assert.equal(res.data.scannedFiles, 1);
+        assert.deepEqual(res.data.findings, []);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
