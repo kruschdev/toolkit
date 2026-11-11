@@ -31,6 +31,34 @@ const DEFAULT_ARGS = [
     '--blink-settings=imagesEnabled=true'
 ];
 
+const SYSTEM_CHROME_CANDIDATES = [
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser'
+];
+
+function resolveBrowserExecutable(explicitPath) {
+    if (explicitPath) return { executablePath: explicitPath, isSystemChrome: true };
+    if (process.env.PUPPETEER_EXECUTABLE_PATH && fs.existsSync(process.env.PUPPETEER_EXECUTABLE_PATH)) {
+        return { executablePath: process.env.PUPPETEER_EXECUTABLE_PATH, isSystemChrome: true };
+    }
+    try {
+        const bundled = puppeteer.executablePath();
+        if (bundled && fs.existsSync(bundled)) {
+            return { executablePath: undefined, isSystemChrome: false };
+        }
+    } catch {
+        // Fall through to system Chrome discovery when Puppeteer browser cache was skipped
+    }
+    for (const candidate of SYSTEM_CHROME_CANDIDATES) {
+        if (fs.existsSync(candidate)) {
+            return { executablePath: candidate, isSystemChrome: true };
+        }
+    }
+    return { executablePath: undefined, isSystemChrome: false };
+}
+
 /**
  * Launch a stealth-configured Puppeteer browser.
  *
@@ -41,9 +69,12 @@ const DEFAULT_ARGS = [
  */
 export async function launchBrowser(options = {}) {
     const launchArgs = options.args || DEFAULT_ARGS;
-    
+    const { executablePath, isSystemChrome } = resolveBrowserExecutable(options.executablePath);
+    const defaultHeadless = options.headless !== false ? (isSystemChrome ? true : 'shell') : false;
+
     return puppeteer.launch({
-        headless: options.headless !== false ? 'shell' : false,
+        headless: defaultHeadless,
+        ...(executablePath ? { executablePath } : {}),
         args: launchArgs,
         defaultViewport: options.viewport || { width: 1280, height: 800 },
         ...options
