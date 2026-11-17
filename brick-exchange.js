@@ -277,3 +277,162 @@ export async function runBrickRepairLoop(options = {}) {
         'brick-exchange.repair-loop'
     );
 }
+
+/**
+ * Bridge `@krusch/toolkit/lego-scout` Rule-of-3 findings directly into the Validated Brick Exchange.
+ * Converts qualifying `CANDIDATE_MEETS_RULE_OF_3` clusters into structured `krusch-lego seal` spec drafts,
+ * and when `implementations[clusterId]` is provided, runs all 4 verification & Ed25519 sealing gates,
+ * optionally publishing into `store` and computing permission-gated recipient inbox suggestions.
+ *
+ * @param {object} scoutReport - Output envelope or `.data` payload from `scoutHomelabLegoCandidates`
+ * @param {object} [options={}]
+ */
+export async function stageScoutCandidateSpecs(scoutReport, options = {}) {
+    const tool = 'brick-exchange.scout-bridge';
+    const rawData =
+        scoutReport && typeof scoutReport === 'object' && Array.isArray(scoutReport.candidateClusters)
+            ? scoutReport
+            : scoutReport?.data && Array.isArray(scoutReport.data.candidateClusters)
+              ? scoutReport.data
+              : null;
+
+    if (!rawData) {
+        return errorEnvelope(
+            'INVALID_SCOUT_REPORT',
+            'Expected scoutReport from scoutHomelabLegoCandidates with candidateClusters array',
+            null,
+            tool
+        );
+    }
+
+    const {
+        includeCovered = false,
+        implementations = {},
+        authorId = 'jean-sre',
+        orgId = 'local-team',
+        privateKeyPem = '',
+        store = null
+    } = options;
+
+    const eligibleClusters = rawData.candidateClusters.filter(
+        (c) =>
+            c &&
+            (c.status === 'CANDIDATE_MEETS_RULE_OF_3' ||
+                (includeCovered === true && c.meetsRuleOfThree === true))
+    );
+
+    const specDrafts = [];
+    const sealedBundles = [];
+    const sealFailures = [];
+
+    for (const cluster of eligibleClusters) {
+        const cleanSlug = String(cluster.id || '')
+            .toLowerCase()
+            .replace(/[^a-z0-9-_]/g, '-')
+            .replace(/^-+|-+$/g, '')
+            .slice(0, 63);
+        if (!cleanSlug) continue;
+
+        const capabilities = [
+            cluster.category || 'infrastructure',
+            cleanSlug,
+            ...(Array.isArray(cluster.projects) ? cluster.projects.slice(0, 3) : [])
+        ]
+            .map((s) => String(s).trim())
+            .filter(Boolean);
+
+        const hoursSaved = Math.max(4, Number(cluster.projectCount || 3) * 3);
+        const draftBlueprint = {
+            id: cleanSlug,
+            name: cluster.title || cleanSlug,
+            summary: cluster.antiBloatNote || `Shared Rule-of-3 brick extracted from ${cluster.projectCount} repositories.`,
+            exportName: 'default',
+            inputSchema: { type: 'object' },
+            outputSchema: { type: 'object' }
+        };
+
+        const draft = {
+            clusterId: cluster.id,
+            brickId: cleanSlug,
+            projectCount: cluster.projectCount,
+            matchedProjects: Array.isArray(cluster.projects) ? [...cluster.projects] : [],
+            sampleEvidence: Array.isArray(cluster.sampleEvidence) ? [...cluster.sampleEvidence] : [],
+            proposedBrickImport: cluster.proposedBrickImport || `@krusch/toolkit/${cleanSlug}`,
+            capabilities,
+            replacesBoilerplate: cluster.antiBloatNote || cluster.title || cleanSlug,
+            estimatedHoursSaved: hoursSaved,
+            blueprint: draftBlueprint,
+            cliHint: `krusch-lego seal ./${cleanSlug}.spec.json --out ./${cleanSlug}.brick.json`
+        };
+        specDrafts.push(draft);
+
+        const impl = implementations && typeof implementations === 'object' ? implementations[cluster.id] || implementations[cleanSlug] : null;
+        if (impl && typeof impl === 'object' && typeof impl.source === 'string') {
+            const mergedBlueprint = {
+                ...draftBlueprint,
+                ...(impl.blueprint && typeof impl.blueprint === 'object' ? impl.blueprint : {})
+            };
+            const sealRes = await sealBrick({
+                blueprint: mergedBlueprint,
+                source: impl.source,
+                positiveChecks: Array.isArray(impl.positiveChecks) ? impl.positiveChecks : [],
+                faultChecks: Array.isArray(impl.faultChecks) ? impl.faultChecks : [],
+                authorId,
+                orgId,
+                brickClass: cluster.category || 'general',
+                capabilities,
+                replacesBoilerplate: draft.replacesBoilerplate,
+                estimatedHoursSaved: hoursSaved,
+                privateKeyPem
+            });
+
+            if (!sealRes.ok) {
+                sealFailures.push({
+                    clusterId: cluster.id,
+                    brickId: cleanSlug,
+                    error: sealRes.error
+                });
+                continue;
+            }
+
+            const bundle = sealRes.data.bundle;
+            let published = null;
+            let suggestions = [];
+
+            if (store && typeof store.publishSealedBrick === 'function') {
+                const pubRes = store.publishSealedBrick(bundle, { actorId: authorId });
+                published = pubRes;
+                if (pubRes.ok && typeof store.suggestRecipients === 'function') {
+                    const sugRes = await store.suggestRecipients({
+                        actorId: authorId,
+                        brickId: bundle.brickId,
+                        sourceHash: bundle.lineage.sourceHash
+                    });
+                    if (sugRes.ok && Array.isArray(sugRes.data?.suggestions)) {
+                        suggestions = sugRes.data.suggestions;
+                    }
+                }
+            }
+
+            sealedBundles.push({
+                clusterId: cluster.id,
+                brickId: bundle.brickId,
+                sourceHash: bundle.lineage.sourceHash,
+                bundle,
+                published,
+                suggestions
+            });
+        }
+    }
+
+    return okEnvelope(
+        tool,
+        `Staged ${specDrafts.length} Rule-of-3 scout candidate(s) (${sealedBundles.length} sealed, ${sealFailures.length} failed gates)`,
+        {
+            qualifyingClusterCount: specDrafts.length,
+            specDrafts,
+            sealedBundles,
+            sealFailures
+        }
+    );
+}

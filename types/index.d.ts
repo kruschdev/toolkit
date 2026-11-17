@@ -1075,7 +1075,8 @@ export {
     planAgentFanOut,
     verifyTwoHopBlastRadius,
     sealBrick,
-    runBrickRepairLoop
+    runBrickRepairLoop,
+    stageScoutCandidateSpecs
 } from './brick-exchange.js';
 export type {
     BrickSafetyFinding,

@@ -21,7 +21,8 @@ import {
     createBrickExchangeMcpServer,
     analyzeBrickBlastRadius,
     planAgentFanOut,
-    verifyTwoHopBlastRadius
+    verifyTwoHopBlastRadius,
+    stageScoutCandidateSpecs
 } from './brick-exchange.js';
 
 const TELEMETRY_BLUEPRINT = {
@@ -684,5 +685,103 @@ export function reconcileSoxBatch(amountsCents, feeBps) {
         assert.equal(cleanPass.data.invariantResult.deltaCents, 0);
     } finally {
         fs.rmSync(tmpRepo, { recursive: true, force: true });
+    }
+});
+
+test('INV-LEGO-35 Scout-to-Brick-Exchange Loop: stageScoutCandidateSpecs enforces Rule-of-3, seals implementation, and suggests recipients', async () => {
+    const store = createBrickExchangeStore({ dbPath: ':memory:' });
+    try {
+        store.upsertOrg({
+            id: 'org-alpha',
+            name: 'Alpha Eng',
+            participating: true,
+            publishers: ['jean-sre'],
+            exporters: ['jean-sre'],
+            receivers: ['jean-sre', 'alice']
+        });
+        store.upsertMember({
+            id: 'jean-sre',
+            name: 'Jean SRE',
+            orgId: 'org-alpha',
+            publisher: true,
+            exporter: true,
+            capabilities: ['idempotency', 'storage']
+        });
+        store.upsertMember({
+            id: 'alice',
+            name: 'Alice',
+            orgId: 'org-alpha',
+            publisher: false,
+            exporter: false,
+            capabilities: ['retry-backoff', 'api-service'],
+            receiveMode: 'team'
+        });
+
+        const fakeScoutReport = {
+            ok: true,
+            data: {
+                ruleOfThreeThreshold: 3,
+                candidateClusters: [
+                    {
+                        id: 'retry-backoff',
+                        title: 'Deterministic Jittered Backoff Calculator',
+                        runtime: 'node',
+                        category: 'resilience',
+                        projectCount: 3,
+                        meetsRuleOfThree: true,
+                        status: 'CANDIDATE_MEETS_RULE_OF_3',
+                        proposedBrickImport: '@krusch/toolkit/retry-backoff',
+                        antiBloatNote: 'Repeated exponential retry loops across 3 services.',
+                        projects: ['api-service', 'worker-service', 'sync-service'],
+                        sampleEvidence: ['<HOMELAB_ROOT>/projects/api-service/src/retry.js']
+                    },
+                    {
+                        id: 'one-off-helper',
+                        title: 'Single-Repo Helper',
+                        runtime: 'node',
+                        category: 'misc',
+                        projectCount: 1,
+                        meetsRuleOfThree: false,
+                        status: 'BELOW_THRESHOLD_DO_NOT_EXTRACT',
+                        proposedBrickImport: '@krusch/toolkit/one-off',
+                        antiBloatNote: 'Below threshold.',
+                        projects: ['api-service'],
+                        sampleEvidence: []
+                    }
+                ]
+            }
+        };
+
+        const staged = await stageScoutCandidateSpecs(fakeScoutReport, {
+            authorId: 'jean-sre',
+            orgId: 'org-alpha',
+            store,
+            implementations: {
+                'retry-backoff': {
+                    blueprint: {
+                        inputSchema: s.object({ attempt: s.number() }),
+                        outputSchema: s.object({ delayMs: s.number() })
+                    },
+                    source: `export default function calcBackoff(input, binding = {}) {
+                        if (typeof input.attempt !== 'number' || input.attempt < 0) {
+                            throw new Error('Negative attempt rejected');
+                        }
+                        const base = typeof binding.baseMs === 'number' ? binding.baseMs : 100;
+                        return { delayMs: base * Math.pow(2, input.attempt) };
+                    }`,
+                    positiveChecks: [{ name: 'attempt 2', input: { attempt: 2 }, expectedOutput: { delayMs: 400 } }],
+                    faultChecks: [{ name: 'rejects negative attempt', input: { attempt: -1 }, expectThrow: true, expectedErrorSubstring: 'Negative' }]
+                }
+            }
+        });
+
+        assert.equal(staged.ok, true);
+        assert.equal(staged.data.qualifyingClusterCount, 1);
+        assert.equal(staged.data.sealedBundles.length, 1);
+        assert.equal(staged.data.sealedBundles[0].brickId, 'retry-backoff');
+        assert.equal(staged.data.sealedBundles[0].published.ok, true);
+        assert.ok(staged.data.sealedBundles[0].suggestions.some((x) => x.memberId === 'alice'));
+    } finally {
+        store.close();
     }
 });

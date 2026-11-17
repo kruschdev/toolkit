@@ -839,7 +839,8 @@ const page = buildKeysetPage(rows, { limit, sortField: 'createdAt', idField: 'id
             'planAgentFanOut',
             'verifyTwoHopBlastRadius',
             'sealBrick',
-            'runBrickRepairLoop'
+            'runBrickRepairLoop',
+            'stageScoutCandidateSpecs'
         ],
         summary: 'Cryptographically attested multi-programmer Validated Brick Exchange with Node 22 --permission sandbox, 4-gate Ed25519 sealing, scoped grants, local binding verification, and .brick-lock.json drift gate.',
         snippet: `import { sealBrick, tryBrickLocally, adoptBrickIntoRepo } from '@krusch/toolkit/brick-exchange';

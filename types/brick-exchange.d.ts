@@ -459,3 +459,27 @@ export declare function runBrickRepairLoop(options: {
     attempts: number;
     history: Array<Record<string, unknown>>;
 }>>;
+export declare function stageScoutCandidateSpecs(
+    scoutReport: Record<string, any>,
+    options?: {
+        includeCovered?: boolean;
+        implementations?: Record<
+            string,
+            {
+                source: string;
+                blueprint?: Partial<BrickBlueprint>;
+                positiveChecks: BrickPositiveCheck[];
+                faultChecks: BrickFaultCheck[];
+            }
+        >;
+        authorId?: string;
+        orgId?: string;
+        privateKeyPem?: string;
+        store?: BrickExchangeStore | null;
+    }
+): Promise<LegoEnvelope<{
+    qualifyingClusterCount: number;
+    specDrafts: Array<Record<string, any>>;
+    sealedBundles: Array<Record<string, any>>;
+    sealFailures: Array<Record<string, any>>;
+}>>;
