@@ -662,3 +662,29 @@ Extends `@krusch/toolkit/catalog` (`auditBoilerplateText`, `scoreLegoBrickCovera
     - `scoreLegoBrickCoverage` accepts both `{ filePath, code }` and `{ path, content }` object entries (`LegoCoverageFileEntry` in `lib/types/catalog.d.ts`).
     - `lib/bin/krusch-lego.js` `audit` computes `scoreLegoBrickCoverage` across scanned files and attaches `sealedFiles`, `sealedBrickIds`, `sealedTouchpoints`, `recommendedBrickIds`, `sealedCoverageRatio`, `breakerTripped`, and `estimatedAuditTokensSaved` onto `payload.data` while preserving `target`, `scannedFiles`, `flaggedFiles`, `clean`, and `findings`.
 
+---
+
+## Wave 9: Collaborative Validated Brick Exchange, Ed25519 Lineage Seals & Deadbolt 2-Hop AST Fan-Out (`@krusch/toolkit/brick-exchange`)
+
+Adapts and generalizes multi-company contract verification, permission-first discovery, and byte-exact lineage sealing from `0xANUSHKA/common-ground-8090` (EVOLVE 8090 Hackathon, MIT License, Copyright (c) 2026 Anushka Jogalekar and Common Ground contributors) onto `@krusch/toolkit` zero-dependency runtime bricks, fused with `DEADBOLT` 2-hop AST blast-radius and parallel multi-agent fan-out governance (`RUNTIME_BRICKS.length === 40`, `170/170` Node tests).
+
+- **Submodule & Export Contract (`lib/brick-exchange.js` & `lib/brick-exchange/*.js`)**:
+  1. **`lib/brick-exchange/sandbox.js` (Zero-Ambient-I/O Safety & Fault-Injection Sandbox)**:
+     - `scanBrickSourceSafety(source, { filePath } = {})`: Rejects ambient network/filesystem/process/eval side effects (`child_process`, `fs`, `net`, `http`, `https`, `dgram`, `tls`, `worker_threads`, `vm`, `process.env`, `eval`, `new Function`, dynamic `import()`) and private LAN/Tailscale IP literals (`INV-LEGO-26`).
+     - `transpileBrickSourceToCjs(source)` & `executeInBrickSandbox(source, { entrypoint, testVectors, faultVectors, timeoutMs, maxMemoryMb } = {})`: Executes candidate bricks inside an isolated child Node process (`--permission` / `--experimental-permission` + `--disallow-code-generation-from-strings`, stripped environment) and locked `vm.createContext` compartment.
+     - `runBrickVerificationGates(spec, source, options)`: Enforces 4 sequential deterministic gates: (1) static safety & `<1ms` Slop-Breaker scan, (2) input/output schema validation (`@krusch/toolkit/schema`), (3) deterministic golden test vectors, and (4) mandatory adversarial fault-injection challenges (`null`/malformed/boundary inputs must fail closed cleanly without uncaught crashes).
+  2. **`lib/brick-exchange/seal-and-policy.js` (Ed25519 Lineage Seals & Tiered Org/Grant RBAC)**:
+     - `generateBrickSigningKeyPair()`, `derivePublicKeyId(publicKeyPem)`, `computeCanonicalHash(value)`, `sealVerifiedBrick(bundleInput, { privateKeyPem, publicKeyPem, orgId, authorId, visibility })`, and `verifyBrickBundle(bundle, { trustedPublicKeys })`: Normalizes `s.*` schema builders via `toJsonSchema`, canonicalizes deterministic JSON, and signs/verifies `{ specHash, codeHash, testReportHash, bundleHash }` with Node `node:crypto` Ed25519.
+     - `canPublishBrick(actor, targetVisibility, policy)` & `canReceiveBrick(actor, brickRecord, grants)`: Enforces `team` intra-org commons plus Common Ground scoped cross-org `Grant` records (`active` vs `revoked`, expiration timestamps, allowed `orgId` / `brickId` / `domain` scopes).
+  3. **`lib/brick-exchange/store-and-matcher.js` (SQLite WAL Registry, Optional HydraDB v2 Boost & `.brick-lock.json` Drift Gate)**:
+     - `createBrickExchangeStore({ dbPath, auditDbPath, hydraAdapter } = {})`: Persists sealed bricks, public keys, cross-org grants, inbox proposals, and adoption receipts in `node:sqlite` WAL paired with tamper-evident `@krusch/toolkit/audit-log` chains. Supports permission-pre-filtered hybrid FTS5/BM25 + boilerplate tag matching, optional permission-scoped `@krusch/toolkit/hydradb` v2 semantic re-ranking & `/feedback` telemetry, and automatic `stageScoutCandidateSpecs` staging from `@krusch/toolkit/lego-scout` (`CANDIDATE_MEETS_RULE_OF_3`).
+     - `tryBrickLocally`, `adoptBrickIntoRepo`, & `auditRepoBrickLocks(repoRoot)`: Vendors verified immutable bricks into `bricks/<id>/index.js`, writes an editable thin adapter at `bricks/<id>/binding.js`, pins cryptographic hashes in `.brick-lock.json`, and flags unsealed local tampering during `krusch-lego audit` and Jean SRE sweeps.
+  4. **`lib/brick-exchange/blast-radius.js` (Deadbolt 2-Hop AST Blast Radius & Multi-Agent Fan-Out)**:
+     - `extractRepoAstGraph(repoRoot, options)` & `analyzeBrickBlastRadius(repoRoot, targetFiles, options)`: Computes 1-hop direct importers and 2-hop transitive dependents, plus per-file `node --permission` filesystem read/write capability flags.
+     - `planAgentFanOut(repoRoot, tasks, { maxFilesPerSubagent = 2, protectedFiles = [] } = {})`: Partitions multi-agent tasks into conflict-free parallel waves (`2`-hop AST cones disjoint, `<= 2` files per worker) while routing shared choke points (`server.js`, `index.js`, `package.json`, `App.jsx`, `tools.js`) to a serialized `orchestratorChokePoints` phase.
+     - `verifyTwoHopBlastRadius(repoRoot, stagedChanges, { leaseFiles, protectedFiles, runPermissionTests } = {})`: Pre-apply gate blocking out-of-lease mutations, `Policy Floor` `protectedFiles` edits, broken named exports across 1-hop/2-hop callers, and 2-hop `--permission` test regressions.
+  5. **`lib/brick-exchange/hub-and-mcp.js` & `lib/bin/krusch-lego.js` (HTTP Console, 10-Tool MCP & CLI)**:
+     - `createBrickExchangeServer` (`19` HTTP routes + zero-build dark-mode Reuse & Grants Web Console `renderBrickExchangeConsoleHtml`) and `createBrickExchangeMcpServer` (`BRICK_EXCHANGE_MCP_TOOLS`: 10 `INV-STACK-03` 4-boolean annotated MCP tools).
+     - `krusch-lego` CLI subcommands: `keygen`, `seal`, `verify`, `try`, `adopt`, `suggest`, `share`, `revoke`, `inbox`, `hub`, `mcp`, `blast-radius`, `fanout`, plus `.brick-lock.json` verification inside `krusch-lego audit`.
+
+
