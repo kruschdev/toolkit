@@ -91,11 +91,17 @@ export {
     captureScreenshot,
     runInteractiveSession,
     launchBrowser,
+    connectBrowserOverCdp,
+    createInputRedactor,
+    createBrowserControlLease,
     DEFAULT_RESPONSIVE_BREAKPOINTS,
+    DEFAULT_REDACTION_MARKER,
+    DEFAULT_REDACTION_MIN_LENGTH,
+    DEFAULT_REDACTION_MAX_BYTES,
     captureResponsiveBreakpoints,
     auditPageWithArgon
 } from './browser.js';
-export type { ResponsiveBreakpoint } from './browser.js';
+export type { BrowserControlLease, InputRedactor, InputRedactorState, ResponsiveBreakpoint } from './browser.js';
 
 // Multimodal Vision (Gemini 4 Argon ready)
 export { callGeminiMedia, callGeminiMediaJson } from './vision.js';
@@ -605,12 +611,18 @@ export type {
     RrfScoredItem
 } from './sqlite.js';
 
-// Lego DNS-Rebinding-Safe SSRF safeFetch & Bounded Rate Limiter Bricks (@krusch/toolkit/security)
+// Lego DNS-Rebinding-Safe SSRF safeFetch, Bounded Rate Limiter & Outbound Scrubber Bricks (@krusch/toolkit/security)
 export {
     isPrivateOrReservedIp,
     validateOutboundUrl,
     safeFetch,
-    createRateLimiter
+    createRateLimiter,
+    DEFAULT_SCRUB_MARKERS,
+    scrubSensitiveText,
+    scrubSensitiveData,
+    scrubPrivateNetworkStrings,
+    readTextWithTimeout,
+    readJsonWithTimeout
 } from './security.js';
 export type {
     IpClassificationOptions,
@@ -634,7 +646,11 @@ export type {
     RateLimitEdgeAllowedResult,
     RateLimitEdgeBlockedResult,
     RateLimitEdgeCheckResult,
-    RateLimiter
+    RateLimiter,
+    ScrubMarkers,
+    ScrubTextOptions,
+    ScrubDataOptions,
+    ReadableResponseInput
 } from './security.js';
 
 // Lego Cross-Repo Rule-of-3 Scout Engine (@krusch/toolkit/lego-scout)
@@ -972,4 +988,60 @@ export type {
     KeysetPageData,
     PaginateItemsOptions
 } from './pagination.js';
+
+// Portable 10-Language WebAssembly Tree-Sitter CST/AST Engine (@krusch/toolkit/treesitter)
+export {
+    TREE_SITTER_GRAMMAR_BY_EXTENSION,
+    SUPPORTED_TREESITTER_EXTENSIONS,
+    initTreeSitterRuntime,
+    isTreeSitterReady,
+    resolveTreeSitterLanguage,
+    analyzeFileWithTreeSitter,
+    extractTreeSitterSymbolsAndImports
+} from './treesitter.js';
+export type {
+    TreeSitterGrammarName,
+    InitTreeSitterOptions,
+    TreeSitterInitData,
+    TreeSitterSyntaxError,
+    TreeSitterSymbol,
+    TreeSitterImport,
+    TreeSitterAnalysisData,
+    AnalyzeTreeSitterOptions,
+    ChunkedTreeSitterSymbol,
+    ChunkedTreeSitterImport,
+    ExtractedTreeSitterChunkResult
+} from './treesitter.js';
+
+// Disjoint Parallel Subagent File-Lease Wave Solver & Node 22 --permission Sandbox (@krusch/toolkit/parallel-planner)
+export {
+    DEFAULT_CHOKE_POINT_FILES,
+    normalizeRelativeCodePath,
+    planDisjointTaskWaves,
+    runNodePermissionSandbox
+} from './parallel-planner.js';
+export type {
+    ParallelTaskInput,
+    DependencyEdgeInput,
+    PlanDisjointTaskWavesOptions,
+    TaskFileLease,
+    ExecutionWave,
+    TaskConeCollision,
+    DisjointWavePlanData,
+    NodePermissionSandboxOptions,
+    NodePermissionSandboxData
+} from './parallel-planner.js';
+
+// Polyglot 10-Language Brownfield Hazard Scanner & GitHub Repo Normalizer (@krusch/toolkit/polyglot-audit)
+export {
+    normalizeGitHubRepoInput,
+    auditPolyglotSource,
+    auditPolyglotRepository
+} from './polyglot-audit.js';
+export type {
+    NormalizedGitHubRepoInput,
+    PolyglotHazardFinding,
+    AuditPolyglotRepositoryOptions,
+    PolyglotRepositoryAuditData
+} from './polyglot-audit.js';
 

@@ -1,11 +1,21 @@
 /**
  * @module browser
  * Shared browser automation utility library.
- * Provides stealth-configured headless Chromium integration via Puppeteer
+ * Provides stealth-configured headless Chromium integration via Puppeteer,
+ * CDP attach bridge for remote/sandboxed browsers (e.g. easi.run),
+ * human-in-the-loop takeover lease & bounded input redaction,
  * and Gemini 4 Argon multimodal visual/telemetry page auditing.
  *
  * Usage:
- *   import { scrapeHtml, captureScreenshot, captureResponsiveBreakpoints, auditPageWithArgon } from '@krusch/toolkit/browser';
+ *   import {
+ *     scrapeHtml,
+ *     captureScreenshot,
+ *     captureResponsiveBreakpoints,
+ *     auditPageWithArgon,
+ *     connectBrowserOverCdp,
+ *     createBrowserControlLease,
+ *     createInputRedactor
+ *   } from '@krusch/toolkit/browser';
  */
 
 import fs from 'fs';
@@ -21,6 +31,10 @@ export const DEFAULT_RESPONSIVE_BREAKPOINTS = [
     { name: 'desktop', width: 1440, height: 900 }
 ];
 
+export const DEFAULT_REDACTION_MARKER = '[redacted]';
+export const DEFAULT_REDACTION_MIN_LENGTH = 4;
+export const DEFAULT_REDACTION_MAX_BYTES = 384 * 1024;
+
 const DEFAULT_ARGS = [
     '--no-sandbox',
     '--disable-setuid-sandbox',
@@ -28,6 +42,7 @@ const DEFAULT_ARGS = [
     '--disable-gpu',
     '--disable-web-security',
     '--disable-features=IsolateOrigins,site-per-process',
+    '--disable-blink-features=AutomationControlled',
     '--blink-settings=imagesEnabled=true'
 ];
 
@@ -82,12 +97,455 @@ export async function launchBrowser(options = {}) {
 }
 
 /**
- * Setup default headers, viewport, and agent on a page.
+ * Connect Puppeteer to an existing Chrome DevTools Protocol (CDP) endpoint
+ * (for example, an SSH-forwarded easi.run session at `http://127.0.0.1:9222`).
+ *
+ * By default, restricts loopback HTTP/WebSocket targets unless `allowRemote=true`
+ * is explicitly passed so CDP control sockets are not exposed over unencrypted LAN.
+ *
+ * @param {string|object} [endpointOrOptions='http://127.0.0.1:9222'] - CDP URL (`http://...` or `ws://...`) or options object
+ * @param {object} [extraOptions={}] - Additional connection options
+ * @param {string} [extraOptions.browserURL] - HTTP CDP origin (e.g. `http://127.0.0.1:9222`)
+ * @param {string} [extraOptions.browserWSEndpoint] - Direct WebSocket CDP endpoint
+ * @param {boolean} [extraOptions.allowRemote=false] - Allow non-loopback CDP endpoints
+ * @param {{ width: number, height: number } | null} [extraOptions.defaultViewport=null] - Viewport override (`null` preserves live window dimensions)
+ * @param {Function} [extraOptions.connectFn] - Optional injectable connector for deterministic unit tests
+ * @returns {Promise<import('puppeteer').Browser>} Connected Puppeteer Browser instance (`disconnect()` detaches without closing the remote Chrome)
+ */
+export async function connectBrowserOverCdp(endpointOrOptions = 'http://127.0.0.1:9222', extraOptions = {}) {
+    const rawOpts = typeof endpointOrOptions === 'string'
+        ? { endpoint: endpointOrOptions, ...extraOptions }
+        : { ...(endpointOrOptions || {}), ...extraOptions };
+
+    const candidate = String(
+        rawOpts.browserWSEndpoint || rawOpts.browserURL || rawOpts.endpoint || 'http://127.0.0.1:9222'
+    ).trim();
+
+    let parsed;
+    try {
+        parsed = new URL(candidate);
+    } catch {
+        throw new Error(`Invalid CDP endpoint URL: ${candidate}`);
+    }
+
+    const allowedSchemes = new Set(['http:', 'https:', 'ws:', 'wss:']);
+    if (!allowedSchemes.has(parsed.protocol)) {
+        throw new Error(`Unsupported CDP protocol "${parsed.protocol}" in ${candidate}`);
+    }
+
+    const host = parsed.hostname.toLowerCase();
+    const isLoopback = host === '127.0.0.1' || host === 'localhost' || host === '::1' || host === '[::1]';
+    if (!isLoopback && rawOpts.allowRemote !== true) {
+        throw new Error(
+            `Refusing non-loopback CDP endpoint "${parsed.hostname}" without allowRemote=true (use an SSH local port forward such as 127.0.0.1:9222)`
+        );
+    }
+
+    const isWs = parsed.protocol === 'ws:' || parsed.protocol === 'wss:';
+    const connectPayload = {
+        ...(isWs ? { browserWSEndpoint: candidate } : { browserURL: candidate.replace(/\/+$/, '') }),
+        defaultViewport: rawOpts.defaultViewport !== undefined ? rawOpts.defaultViewport : null
+    };
+
+    const connector = typeof rawOpts.connectFn === 'function'
+        ? rawOpts.connectFn
+        : (opts) => puppeteer.connect(opts);
+
+    return connector(connectPayload);
+}
+
+/**
+ * Resolve a browser handle for a single operation: reuse `options.browser`,
+ * attach via CDP when `options.cdpEndpoint` / `options.browserURL` / `options.browserWSEndpoint` is provided,
+ * or launch a fresh headless browser.
+ *
+ * When attached over CDP, cleanup detaches (`browser.disconnect()`) instead of terminating the remote session.
+ *
+ * @param {object} [options={}]
+ * @returns {Promise<{ browser: import('puppeteer').Browser, release: () => Promise<void>, attachedOverCdp: boolean }>}
+ */
+async function acquireBrowserHandle(options = {}) {
+    if (options.browser) {
+        return {
+            browser: options.browser,
+            attachedOverCdp: false,
+            release: async () => {}
+        };
+    }
+
+    const cdpTarget = options.cdpEndpoint || options.browserWSEndpoint || options.browserURL;
+    if (cdpTarget) {
+        const browser = await connectBrowserOverCdp(cdpTarget, options);
+        return {
+            browser,
+            attachedOverCdp: true,
+            release: async () => {
+                if (typeof browser.disconnect === 'function') {
+                    await browser.disconnect();
+                }
+            }
+        };
+    }
+
+    const browser = await launchBrowser(options);
+    return {
+        browser,
+        attachedOverCdp: false,
+        release: async () => {
+            await browser.close();
+        }
+    };
+}
+
+/**
+ * Create a bounded, fail-closed human-input redactor for agent browser observations.
+ *
+ * Tracks sensitive strings typed or pasted during human takeover (default `minLength = 4`,
+ * `maxBytes = 384 KiB`). Once human takeover occurs (`markHumanTakeover()`), `screenshotsAllowed()`
+ * becomes permanently `false` for that session, and any recorded string (plus optional sliding
+ * `minLength` substrings when `includeSubstrings=true`) is scrubbed from text and structured JSON
+ * observations as `[redacted]`. If recorded byte capacity is exceeded, the redactor fails closed
+ * (`saturated = true`), withholding all subsequent observations.
+ *
+ * @param {object} [options={}]
+ * @param {number} [options.minLength=4] - Minimum character length to redact
+ * @param {number} [options.maxBytes=393216] - Maximum UTF-8 byte budget before fail-closed saturation
+ * @param {string} [options.marker='[redacted]'] - Replacement token
+ * @returns {object} Stateful input redactor instance
+ */
+export function createInputRedactor(options = {}) {
+    const minLength = Math.max(2, Number(options.minLength ?? DEFAULT_REDACTION_MIN_LENGTH));
+    const maxBytes = Math.max(64, Number(options.maxBytes ?? DEFAULT_REDACTION_MAX_BYTES));
+    const marker = String(options.marker || DEFAULT_REDACTION_MARKER);
+
+    const entries = new Set();
+    let usedBytes = 0;
+    let saturated = false;
+    let screenshotsBlocked = false;
+    let compiledRegex = null;
+
+    function escapeRegExp(str) {
+        return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    function addCandidate(raw) {
+        if (saturated || typeof raw !== 'string') return;
+        const trimmed = raw.replace(/^[\r\n]+|[\r\n]+$/g, '');
+        if ([...trimmed].length < minLength) return;
+        if (entries.has(trimmed)) return;
+
+        const byteLen = Buffer.byteLength(trimmed, 'utf8');
+        if (usedBytes + byteLen > maxBytes) {
+            saturated = true;
+            compiledRegex = null;
+            return;
+        }
+        entries.add(trimmed);
+        usedBytes += byteLen;
+        compiledRegex = null;
+    }
+
+    function recordInput(text, recordOpts = {}) {
+        if (typeof text !== 'string' || !text) return stateSnapshot();
+        const variants = [text];
+        const singleLine = text.replace(/[\r\n]+/g, '');
+        if (singleLine.length < text.length) {
+            variants.push(singleLine);
+        }
+
+        for (const variant of variants) {
+            addCandidate(variant);
+            if (recordOpts.includeSubstrings === true && !saturated) {
+                const chars = [...variant.replace(/^[\r\n]+|[\r\n]+$/g, '')];
+                for (let i = 0; i + minLength <= chars.length; i += 1) {
+                    addCandidate(chars.slice(i, i + minLength).join(''));
+                    if (saturated) break;
+                }
+            }
+        }
+        return stateSnapshot();
+    }
+
+    function getMatcher() {
+        if (saturated || entries.size === 0) return null;
+        if (!compiledRegex) {
+            const ordered = [...entries].sort((a, b) => b.length - a.length);
+            compiledRegex = new RegExp(ordered.map(escapeRegExp).join('|'), 'g');
+        }
+        return compiledRegex;
+    }
+
+    function scrubText(input) {
+        if (typeof input !== 'string') return input;
+        if (saturated) return marker;
+        const matcher = getMatcher();
+        if (!matcher) return input;
+        return input.replace(matcher, marker);
+    }
+
+    function isPasswordFieldNode(node) {
+        if (!node || typeof node !== 'object') return false;
+        const role = String(node.role || node.type || node.inputType || '').toLowerCase();
+        return role === 'password' || role === 'passwordtext' || node.isPassword === true;
+    }
+
+    function scrubValue(value) {
+        if (saturated) {
+            return { ok: false, saturated: true, redacted: true, data: null, summary: 'Observation withheld: input redactor byte budget saturated.' };
+        }
+
+        function walk(node) {
+            if (typeof node === 'string') return scrubText(node);
+            if (Array.isArray(node)) return node.map(walk);
+            if (node && typeof node === 'object') {
+                const maskPasswordValue = isPasswordFieldNode(node);
+                const out = {};
+                for (const [k, v] of Object.entries(node)) {
+                    if (maskPasswordValue && (k === 'value' || k === 'textValue' || k === 'defaultValue') && typeof v === 'string' && v.length > 0) {
+                        out[k] = marker;
+                    } else {
+                        out[k] = walk(v);
+                    }
+                }
+                return out;
+            }
+            return node;
+        }
+
+        return {
+            ok: true,
+            saturated: false,
+            screenshotsAllowed: !screenshotsBlocked,
+            data: walk(value)
+        };
+    }
+
+    function markHumanTakeover() {
+        screenshotsBlocked = true;
+        return stateSnapshot();
+    }
+
+    function stateSnapshot() {
+        return {
+            entryCount: entries.size,
+            usedBytes,
+            maxBytes,
+            minLength,
+            saturated,
+            screenshotsBlocked,
+            screenshotsAllowed: !screenshotsBlocked && !saturated
+        };
+    }
+
+    return {
+        recordInput,
+        markHumanTakeover,
+        scrubText,
+        scrubValue,
+        screenshotsAllowed: () => !screenshotsBlocked && !saturated,
+        getState: stateSnapshot
+    };
+}
+
+/**
+ * Create a cooperative Human-in-the-Loop (HITL) browser control lease.
+ *
+ * Coordinates exclusive control between an autonomous agent and a human operator
+ * (for 2FA, CAPTCHAs, OAuth consent, or credential entry):
+ * - `assertAgentCanAct()` throws a structured `HUMAN_CONTROL_ACTIVE` error while a person holds the lease.
+ * - `requestHuman(reason, meta)` transitions the session to `needs_human`, notifies `onNeedsHuman`, and pauses agent actions.
+ * - `takeover(actor)` grants exclusive control to the human and permanently disables raw agent screenshots on the attached `redactor`.
+ * - `releaseToAgent(resolution)` hands control back (`resumed` or `skipped`) and resolves all pending `waitForAgentControl()` callers.
+ *
+ * @param {object} [options={}]
+ * @param {string} [options.sessionId='default'] - Browser session identifier
+ * @param {ReturnType<typeof createInputRedactor>} [options.redactor] - Optional attached input redactor
+ * @param {(event: object) => void|Promise<void>} [options.onNeedsHuman] - Optional webhook/notification callback when agent requests help
+ * @returns {object} Control lease coordinator
+ */
+export function createBrowserControlLease(options = {}) {
+    const sessionId = String(options.sessionId || 'default');
+    const redactor = options.redactor || createInputRedactor(options.redactorOptions);
+    const onNeedsHuman = typeof options.onNeedsHuman === 'function' ? options.onNeedsHuman : null;
+
+    let holder = 'agent'; // 'agent' | 'human'
+    let status = 'agent_active'; // 'agent_active' | 'needs_human' | 'human_active'
+    let pendingReason = null;
+    let requestedAt = null;
+    let lastResolution = null;
+    const waiters = new Set();
+
+    function getStatus() {
+        return {
+            sessionId,
+            holder,
+            status,
+            pendingReason,
+            requestedAt,
+            lastResolution,
+            redaction: redactor.getState()
+        };
+    }
+
+    function assertAgentCanAct(actionName = 'browser_action') {
+        if (holder !== 'agent' || status !== 'agent_active') {
+            const err = new Error(
+                `Agent cannot run "${actionName}" on session "${sessionId}" while status is "${status}" (holder: ${holder}). Call waitForAgentControl() first.`
+            );
+            err.code = 'HUMAN_CONTROL_ACTIVE';
+            err.sessionStatus = getStatus();
+            throw err;
+        }
+        return true;
+    }
+
+    function assertScreenshotAllowed() {
+        assertAgentCanAct('screenshot');
+        if (!redactor.screenshotsAllowed()) {
+            const err = new Error(
+                `Screenshots are permanently disabled for session "${sessionId}" after human takeover to protect entered credentials.`
+            );
+            err.code = 'SCREENSHOTS_BLOCKED_AFTER_TAKEOVER';
+            err.sessionStatus = getStatus();
+            throw err;
+        }
+        return true;
+    }
+
+    async function requestHuman(reason, meta = {}) {
+        const cleanReason = String(reason || 'Human verification required').trim();
+        status = 'needs_human';
+        pendingReason = cleanReason;
+        requestedAt = new Date().toISOString();
+
+        const payload = {
+            sessionId,
+            status,
+            reason: cleanReason,
+            requestedAt,
+            meta
+        };
+
+        if (onNeedsHuman) {
+            await onNeedsHuman(payload);
+        }
+        return payload;
+    }
+
+    function takeover(actor = 'human') {
+        holder = 'human';
+        status = 'human_active';
+        redactor.markHumanTakeover();
+        return {
+            ...getStatus(),
+            actor
+        };
+    }
+
+    function recordHumanInput(text, recordOpts = {}) {
+        redactor.markHumanTakeover();
+        return redactor.recordInput(text, recordOpts);
+    }
+
+    function releaseToAgent(resolution = 'resumed') {
+        const normalized = resolution === 'skipped' ? 'skipped' : 'resumed';
+        holder = 'agent';
+        status = 'agent_active';
+        lastResolution = {
+            outcome: normalized,
+            reason: pendingReason,
+            resolvedAt: new Date().toISOString()
+        };
+        pendingReason = null;
+        requestedAt = null;
+
+        for (const waiter of [...waiters]) {
+            waiters.delete(waiter);
+            waiter.resolve(lastResolution);
+        }
+        return getStatus();
+    }
+
+    function waitForAgentControl({ timeoutMs = 300000, signal } = {}) {
+        if (holder === 'agent' && status === 'agent_active') {
+            return Promise.resolve(
+                lastResolution || { outcome: 'resumed', reason: null, resolvedAt: new Date().toISOString() }
+            );
+        }
+
+        return new Promise((resolve, reject) => {
+            const entry = {
+                resolve: (val) => {
+                    cleanup();
+                    resolve(val);
+                },
+                reject: (err) => {
+                    cleanup();
+                    reject(err);
+                }
+            };
+
+            const timer = timeoutMs > 0
+                ? setTimeout(() => {
+                    waiters.delete(entry);
+                    const err = new Error(`Timed out after ${timeoutMs}ms waiting for human control handoff on session "${sessionId}"`);
+                    err.code = 'HUMAN_HANDOFF_TIMEOUT';
+                    entry.reject(err);
+                }, timeoutMs)
+                : null;
+
+            const onAbort = () => {
+                waiters.delete(entry);
+                const err = new Error(`Aborted while waiting for human control handoff on session "${sessionId}"`);
+                err.code = 'ABORT_ERR';
+                entry.reject(err);
+            };
+
+            function cleanup() {
+                if (timer) clearTimeout(timer);
+                if (signal) signal.removeEventListener('abort', onAbort);
+            }
+
+            if (signal) {
+                if (signal.aborted) {
+                    onAbort();
+                    return;
+                }
+                signal.addEventListener('abort', onAbort, { once: true });
+            }
+
+            waiters.add(entry);
+        });
+    }
+
+    async function runGuardedStep(actionName, fn) {
+        assertAgentCanAct(actionName);
+        const raw = await fn();
+        return redactor.scrubValue(raw);
+    }
+
+    return {
+        redactor,
+        getStatus,
+        assertAgentCanAct,
+        assertScreenshotAllowed,
+        requestHuman,
+        takeover,
+        recordHumanInput,
+        releaseToAgent,
+        waitForAgentControl,
+        runGuardedStep
+    };
+}
+
+/**
+ * Setup default headers, viewport, and stealth patches on a page.
  *
  * @param {import('puppeteer').Page} page - Puppeteer page instance
  * @param {object} [options={}] - Customization options
  */
 async function setupPageStealth(page, options = {}) {
+    if (options.skipStealthOverrides === true) return;
     const userAgent = options.userAgent || DEFAULT_USER_AGENT;
     await page.setUserAgent(userAgent);
     await page.setExtraHTTPHeaders({
@@ -124,18 +582,28 @@ async function navigateAndReady(page, url, options = {}) {
  * @returns {Promise<string>} Fully rendered HTML source
  */
 export async function scrapeHtml(url, options = {}) {
-    const browser = options.browser || await launchBrowser(options);
+    if (options.lease) {
+        options.lease.assertAgentCanAct('scrapeHtml');
+    }
+    const { browser, release, attachedOverCdp } = await acquireBrowserHandle(options);
     const page = await browser.newPage();
 
     try {
-        await setupPageStealth(page, options);
+        if (!attachedOverCdp || options.userAgent || options.headers) {
+            await setupPageStealth(page, options);
+        }
         await navigateAndReady(page, url, options);
-        return await page.content();
+        const rawHtml = await page.content();
+        if (options.lease) {
+            return options.lease.redactor.scrubText(rawHtml);
+        }
+        if (options.redactor) {
+            return options.redactor.scrubText(rawHtml);
+        }
+        return rawHtml;
     } finally {
         await page.close();
-        if (!options.browser) {
-            await browser.close();
-        }
+        await release();
     }
 }
 
@@ -149,11 +617,21 @@ export async function scrapeHtml(url, options = {}) {
  * @returns {Promise<string>} Absolute path to the saved screenshot
  */
 export async function captureScreenshot(url, outputPath, options = {}) {
-    const browser = options.browser || await launchBrowser(options);
+    if (options.lease) {
+        options.lease.assertScreenshotAllowed();
+    } else if (options.redactor && !options.redactor.screenshotsAllowed()) {
+        const err = new Error('Screenshots are blocked after human takeover to protect entered credentials.');
+        err.code = 'SCREENSHOTS_BLOCKED_AFTER_TAKEOVER';
+        throw err;
+    }
+
+    const { browser, release, attachedOverCdp } = await acquireBrowserHandle(options);
     const page = await browser.newPage();
 
     try {
-        await setupPageStealth(page, options);
+        if (!attachedOverCdp || options.userAgent || options.headers) {
+            await setupPageStealth(page, options);
+        }
         await navigateAndReady(page, url, options);
         
         await page.screenshot({
@@ -164,9 +642,7 @@ export async function captureScreenshot(url, outputPath, options = {}) {
         return outputPath;
     } finally {
         await page.close();
-        if (!options.browser) {
-            await browser.close();
-        }
+        await release();
     }
 }
 
@@ -214,21 +690,38 @@ async function executeInteractiveStep(page, step) {
  * @returns {Promise<{ html: string, screenshotPath?: string }>} The HTML (and optional screenshot)
  */
 export async function runInteractiveSession(url, steps, options = {}) {
-    const browser = options.browser || await launchBrowser(options);
+    if (options.lease) {
+        options.lease.assertAgentCanAct('runInteractiveSession');
+    }
+    const { browser, release, attachedOverCdp } = await acquireBrowserHandle(options);
     const page = await browser.newPage();
     const result = {};
 
     try {
-        await setupPageStealth(page, options);
+        if (!attachedOverCdp || options.userAgent || options.headers) {
+            await setupPageStealth(page, options);
+        }
         await navigateAndReady(page, url, options);
 
         for (const step of steps) {
+            if (options.lease) {
+                options.lease.assertAgentCanAct(`step:${step.action}`);
+            }
             await executeInteractiveStep(page, step);
         }
 
-        result.html = await page.content();
+        const rawHtml = await page.content();
+        const activeRedactor = options.lease?.redactor || options.redactor || null;
+        result.html = activeRedactor ? activeRedactor.scrubText(rawHtml) : rawHtml;
 
         if (options.screenshotPath) {
+            if (options.lease) {
+                options.lease.assertScreenshotAllowed();
+            } else if (activeRedactor && !activeRedactor.screenshotsAllowed()) {
+                const err = new Error('Screenshots are blocked after human takeover to protect entered credentials.');
+                err.code = 'SCREENSHOTS_BLOCKED_AFTER_TAKEOVER';
+                throw err;
+            }
             await page.screenshot({
                 path: options.screenshotPath,
                 fullPage: options.fullPage !== false
@@ -239,9 +732,7 @@ export async function runInteractiveSession(url, steps, options = {}) {
         return result;
     } finally {
         await page.close();
-        if (!options.browser) {
-            await browser.close();
-        }
+        await release();
     }
 }
 
@@ -257,12 +748,15 @@ export async function runInteractiveSession(url, steps, options = {}) {
  * @returns {Promise<{url: string, title: string, screenshots: Array<{name: string, width: number, height: number, path: string, mimeType: string, base64Data: string}>, consoleErrors: string[], pageErrors: string[], failedRequests: string[]}>}
  */
 export async function captureResponsiveBreakpoints(url, outputDir = '/tmp/krusch-browser-audit', options = {}) {
+    if (options.lease) {
+        options.lease.assertScreenshotAllowed();
+    }
     if (typeof options.captureFn === 'function') {
         return await options.captureFn(url, outputDir, options);
     }
 
     fs.mkdirSync(outputDir, { recursive: true });
-    const browser = options.browser || await launchBrowser(options);
+    const { browser, release, attachedOverCdp } = await acquireBrowserHandle(options);
     const page = await browser.newPage();
 
     const consoleErrors = [];
@@ -283,7 +777,9 @@ export async function captureResponsiveBreakpoints(url, outputDir = '/tmp/krusch
     });
 
     try {
-        await setupPageStealth(page, options);
+        if (!attachedOverCdp || options.userAgent || options.headers) {
+            await setupPageStealth(page, options);
+        }
         await navigateAndReady(page, url, options);
         const title = await page.title();
         const breakpoints = options.breakpoints || DEFAULT_RESPONSIVE_BREAKPOINTS;
@@ -325,9 +821,7 @@ export async function captureResponsiveBreakpoints(url, outputDir = '/tmp/krusch
         };
     } finally {
         await page.close();
-        if (!options.browser) {
-            await browser.close();
-        }
+        await release();
     }
 }
 

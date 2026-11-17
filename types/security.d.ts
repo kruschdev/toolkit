@@ -177,3 +177,52 @@ export declare function safeFetch(
 ): Promise<LegoEnvelope<SafeFetchData, SsrfErrorDetails>>;
 
 export declare function createRateLimiter(options?: CreateRateLimiterOptions): RateLimiter;
+
+export interface ScrubMarkers {
+    readonly token: string;
+    readonly secret: string;
+    readonly credentials: string;
+    readonly privateUrl: string;
+    readonly privateHost: string;
+    readonly localPath: string;
+    readonly email: string;
+    readonly circular: string;
+    readonly maxDepth: string;
+}
+
+export declare const DEFAULT_SCRUB_MARKERS: ScrubMarkers;
+
+export interface ScrubTextOptions {
+    redactEmails?: boolean;
+    redactPaths?: boolean;
+    redactPrivateNetwork?: boolean;
+    markers?: Partial<ScrubMarkers>;
+}
+
+export interface ScrubDataOptions extends ScrubTextOptions {
+    maxDepth?: number;
+    redactSensitiveKeys?: boolean;
+}
+
+export type ReadableResponseInput =
+    | Response
+    | { data?: { response?: Response | null } | null; response?: Response | null };
+
+export declare function scrubSensitiveText(raw: unknown, options?: ScrubTextOptions): string;
+
+export declare function scrubSensitiveData(value: unknown, options?: ScrubDataOptions): unknown;
+
+export declare function scrubPrivateNetworkStrings(
+    value: unknown,
+    options?: ScrubDataOptions
+): unknown;
+
+export declare function readTextWithTimeout(
+    res: ReadableResponseInput,
+    timeoutMs?: number
+): Promise<string>;
+
+export declare function readJsonWithTimeout<T = unknown>(
+    res: ReadableResponseInput,
+    timeoutMs?: number
+): Promise<T>;

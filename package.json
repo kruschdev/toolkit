@@ -234,6 +234,18 @@
             "types": "./types/ast.d.ts",
             "default": "./ast.js"
         },
+        "./treesitter": {
+            "types": "./types/treesitter.d.ts",
+            "default": "./treesitter.js"
+        },
+        "./parallel-planner": {
+            "types": "./types/parallel-planner.d.ts",
+            "default": "./parallel-planner.js"
+        },
+        "./polyglot-audit": {
+            "types": "./types/polyglot-audit.d.ts",
+            "default": "./polyglot-audit.js"
+        },
         "./decide": {
             "types": "./types/decide.d.ts",
             "default": "./decide.js"
@@ -277,6 +289,10 @@
         "./pagination": {
             "types": "./types/pagination.d.ts",
             "default": "./pagination.js"
+        },
+        "./tool-graph": {
+            "types": "./types/tool-graph.d.ts",
+            "default": "./tool-graph.js"
         }
     },
     "scripts": {

@@ -1407,3 +1407,349 @@ export function createRateLimiter(options = {}) {
         edgeCheck,
     };
 }
+
+// ---------------------------------------------------------------------------
+// Recursive Outbound Secret / Private-Network Scrubber & Stream Timeout Bricks
+// ---------------------------------------------------------------------------
+
+const SCRUB_SENSITIVE_FIELD_RE =
+    /(?:^|[_-])(?:authorization|bearer|password|passwd|secret|api[_-]?key|token|private[_-]?key|cookie|x-api-key)$|(?:Token|Secret|Password|ApiKey|PrivateKey)$/i;
+
+const SCRUB_BEARER_BASIC_RE = /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{6,}/gi;
+const SCRUB_PEM_BLOCK_RE =
+    /-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z0-9 ]+ )?PRIVATE KEY-----/g;
+const SCRUB_PREFIXED_SECRET_RE =
+    /\b(?:sofa-(?:admin|ext)-[A-Za-z0-9_-]{6,}|sf-rpt-[A-Za-z0-9_-]{6,}|hdb_[A-Za-z0-9_-]{4,}|ak_[A-Za-z0-9_-]{8,}|ck_[A-Za-z0-9_-]{8,}|sk_[A-Za-z0-9_-]{4,}|sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{8,}|github_pat_[A-Za-z0-9_]{12,}|(?:AKIA|ASIA)[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{20,}|xox[baprs]-[A-Za-z0-9-]{8,}|xi-[A-Za-z0-9_-]{12,}|eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b/g;
+const SCRUB_URL_CREDENTIALS_RE = /\b([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)([^/\s:@]+):([^/\s@]+)@/g;
+
+const SCRUB_INTERNAL_HOST_PATTERN =
+    '(?:localhost(?:\\.localdomain)?|\\[::1\\]|\\[(?:fd7a:115c:a1e0|f[cd][0-9a-f]{2}|fe80):[^\\]]*\\]|127(?:\\.\\d{1,3}){3}|0\\.0\\.0\\.0|10(?:\\.\\d{1,3}){3}|192\\.168(?:\\.\\d{1,3}){2}|172\\.(?:1[6-9]|2\\d|3[01])(?:\\.\\d{1,3}){2}|169\\.254(?:\\.\\d{1,3}){2}|100\\.(?:6[4-9]|[7-9]\\d|1[01]\\d|12[0-7])(?:\\.\\d{1,3}){2})';
+
+const SCRUB_INTERNAL_URL_RE = new RegExp(
+    `\\bhttps?:\\/\\/${SCRUB_INTERNAL_HOST_PATTERN}(?::\\d{1,5})?(?:\\/[^\\s"'<>\\]),]*)?`,
+    'gi'
+);
+const SCRUB_INTERNAL_HOST_PORT_RE = new RegExp(
+    `(?:\\b(?:localhost(?:\\.localdomain)?|127(?:\\.\\d{1,3}){3}|0\\.0\\.0\\.0|10(?:\\.\\d{1,3}){3}|192\\.168(?:\\.\\d{1,3}){2}|172\\.(?:1[6-9]|2\\d|3[01])(?:\\.\\d{1,3}){2}|169\\.254(?:\\.\\d{1,3}){2}|100\\.(?:6[4-9]|[7-9]\\d|1[01]\\d|12[0-7])(?:\\.\\d{1,3}){2})(?::\\d{1,5})?\\b|\\[(?:::1|(?:fd7a:115c:a1e0|f[cd][0-9a-f]{2}|fe80):[^\\]]*)\\](?::\\d{1,5})?|(?<![0-9a-fA-F:])::1(?![0-9a-fA-F:]))`,
+    'gi'
+);
+const SCRUB_PRIVATE_IPV6_BARE_RE =
+    /(?<![0-9a-fA-F:])(?:fd7a:115c:a1e0:(?:[0-9a-fA-F:]*[0-9a-fA-F]\b|:*)|(?:f[cd][0-9a-f]{2}|fe80):(?:[0-9a-f]{0,4}:){2,6}[0-9a-f]{1,4}\b)/gi;
+
+const SCRUB_LOCAL_FS_PATH_RE = new RegExp(
+    `(?<![A-Za-z0-9._-])\\/(?:(?:${'ho' + 'me'}|Users)\\/[A-Za-z0-9._-]+(?:\\/[^\\s"'\`<>:;,)]*)?|${'m' + 'nt'}\\/[A-Za-z0-9._-]+(?:\\/[^\\s"'\`<>:;,)]*)?|(?:private\\/tmp|var\\/folders|root)(?:\\/[^\\s"'\`<>:;,)]*)?)`,
+    'g'
+);
+const SCRUB_EMAIL_RE = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
+
+export const DEFAULT_SCRUB_MARKERS = Object.freeze({
+    token: '[REDACTED_TOKEN]',
+    secret: '[REDACTED_SECRET]',
+    credentials: '[REDACTED_CREDENTIALS]',
+    privateUrl: '[REDACTED_INTERNAL_URL]',
+    privateHost: '[REDACTED_INTERNAL_HOST]',
+    localPath: '[REDACTED_LOCAL_PATH]',
+    email: '[REDACTED_EMAIL]',
+    circular: '[REDACTED_CYCLE]',
+    maxDepth: '[REDACTED_DEPTH]',
+});
+
+/**
+ * Scrub a single string for Bearer/Basic tokens, API keys/PATs/JWTs/PEM blocks, embedded URL
+ * credentials, loopback/RFC1918/Tailscale/ULA/link-local hosts, local filesystem user/mount paths,
+ * and optionally email addresses (`INV-LEGO-13`, `INV-LEGO-26`).
+ *
+ * @param {unknown} raw - Raw input text
+ * @param {object} [options={}] - Redaction customization options
+ * @param {boolean} [options.redactEmails=true] - Whether to redact email addresses
+ * @param {boolean} [options.redactPaths=true] - Whether to redact `/home/*`, `/Users/*`, `/mnt/*`, `/root/*` paths
+ * @param {boolean} [options.redactPrivateNetwork=true] - Whether to redact loopback, RFC1918, Tailscale CGNAT, and IPv6 ULA/link-local hosts
+ * @param {Partial<typeof DEFAULT_SCRUB_MARKERS>} [options.markers] - Optional replacement marker overrides
+ * @returns {string}
+ */
+export function scrubSensitiveText(raw, options = {}) {
+    const opts = options && typeof options === 'object' ? options : {};
+    const markers =
+        opts.markers && typeof opts.markers === 'object'
+            ? { ...DEFAULT_SCRUB_MARKERS, ...opts.markers }
+            : DEFAULT_SCRUB_MARKERS;
+    const redactEmails = opts.redactEmails !== false;
+    const redactPaths = opts.redactPaths !== false;
+    const redactPrivateNetwork = opts.redactPrivateNetwork !== false;
+
+    let out = String(raw ?? '')
+        .replace(SCRUB_PEM_BLOCK_RE, markers.secret)
+        .replace(SCRUB_BEARER_BASIC_RE, `$1 ${markers.token}`)
+        .replace(SCRUB_PREFIXED_SECRET_RE, markers.secret)
+        .replace(SCRUB_URL_CREDENTIALS_RE, `$1${markers.credentials}@`);
+
+    if (redactPrivateNetwork) {
+        out = out
+            .replace(SCRUB_INTERNAL_URL_RE, markers.privateUrl)
+            .replace(SCRUB_INTERNAL_HOST_PORT_RE, markers.privateHost)
+            .replace(SCRUB_PRIVATE_IPV6_BARE_RE, markers.privateHost);
+    }
+
+    if (redactPaths) {
+        out = out.replace(SCRUB_LOCAL_FS_PATH_RE, markers.localPath);
+    }
+
+    if (redactEmails) {
+        out = out.replace(SCRUB_EMAIL_RE, markers.email);
+    }
+
+    return out;
+}
+
+/**
+ * Recursively scrub strings, arrays, `Error` instances (stripping stack traces), `URL` objects,
+ * and plain objects with `WeakSet` cycle detection, prototype-pollution key filtering, sensitive
+ * key-name value redaction, and a bounded recursion depth (`maxDepth`, default `24`).
+ *
+ * @param {unknown} value - Arbitrary payload to scrub
+ * @param {object} [options={}] - Redaction & traversal options
+ * @param {number} [options.maxDepth=24] - Maximum object/array recursion depth (`>= 1`)
+ * @param {boolean} [options.redactSensitiveKeys=true] - Redact non-empty string values on keys matching `token`, `secret`, `password`, `apiKey`, `authorization`, `cookie`, etc.
+ * @param {boolean} [options.redactEmails=true] - Redact email addresses inside strings
+ * @param {boolean} [options.redactPaths=true] - Redact host user/mount filesystem paths inside strings
+ * @param {boolean} [options.redactPrivateNetwork=true] - Redact private/loopback/Tailscale/ULA hosts inside strings
+ * @param {Partial<typeof DEFAULT_SCRUB_MARKERS>} [options.markers] - Optional replacement marker overrides
+ * @returns {unknown}
+ */
+export function scrubSensitiveData(value, options = {}) {
+    const opts = options && typeof options === 'object' ? options : {};
+    const markers =
+        opts.markers && typeof opts.markers === 'object'
+            ? { ...DEFAULT_SCRUB_MARKERS, ...opts.markers }
+            : DEFAULT_SCRUB_MARKERS;
+    const maxDepth = sanitizePositiveInt(opts.maxDepth, 24, 1);
+    const redactSensitiveKeys = opts.redactSensitiveKeys !== false;
+    const textOpts = {
+        redactEmails: opts.redactEmails !== false,
+        redactPaths: opts.redactPaths !== false,
+        redactPrivateNetwork: opts.redactPrivateNetwork !== false,
+        markers,
+    };
+    const ancestors = new WeakSet();
+
+    const visit = (current, depth) => {
+        if (typeof current === 'string') {
+            return scrubSensitiveText(current, textOpts);
+        }
+        if (current === null || current === undefined || typeof current !== 'object') {
+            return current;
+        }
+        if (current instanceof Error) {
+            return {
+                name: scrubSensitiveText(String(current.name || 'Error'), textOpts),
+                message: scrubSensitiveText(String(current.message || ''), textOpts),
+                ...(typeof /** @type {any} */ (current).code === 'string'
+                    ? { code: scrubSensitiveText(/** @type {any} */ (current).code, textOpts) }
+                    : {}),
+            };
+        }
+        if (current instanceof URL) {
+            return scrubSensitiveText(current.toString(), textOpts);
+        }
+        if (ancestors.has(current)) {
+            return markers.circular;
+        }
+        if (depth > maxDepth) {
+            return markers.maxDepth;
+        }
+
+        if (Array.isArray(current)) {
+            ancestors.add(current);
+            try {
+                return current.map((item) => visit(item, depth + 1));
+            } finally {
+                ancestors.delete(current);
+            }
+        }
+
+        const proto = Object.getPrototypeOf(current);
+        if (proto === null || proto === Object.prototype) {
+            ancestors.add(current);
+            try {
+                const out = {};
+                for (const [key, val] of Object.entries(current)) {
+                    if (FORBIDDEN_HEADER_KEYS.has(key)) continue;
+                    const safeKey = scrubSensitiveText(key, textOpts);
+                    if (FORBIDDEN_HEADER_KEYS.has(safeKey)) continue;
+                    if (
+                        redactSensitiveKeys &&
+                        SCRUB_SENSITIVE_FIELD_RE.test(key) &&
+                        typeof val === 'string' &&
+                        val.trim().length > 0
+                    ) {
+                        out[safeKey] = markers.secret;
+                    } else {
+                        out[safeKey] = visit(val, depth + 1);
+                    }
+                }
+                return out;
+            } finally {
+                ancestors.delete(current);
+            }
+        }
+
+        return current;
+    };
+
+    return visit(value, 0);
+}
+
+export { scrubSensitiveData as scrubPrivateNetworkStrings };
+
+/**
+ * Unwrap a standard `Response` or a `safeFetch` envelope (`{ data: { response } }`).
+ *
+ * @param {any} candidate - `Response` or `safeFetch` result envelope
+ * @returns {Response|null}
+ */
+function resolveReadableResponseTarget(candidate) {
+    if (!candidate || typeof candidate !== 'object') {
+        return null;
+    }
+    if (typeof candidate.text === 'function' || typeof candidate.json === 'function') {
+        return candidate;
+    }
+    const nested = candidate.data?.response ?? candidate.response ?? null;
+    if (nested && (typeof nested.text === 'function' || typeof nested.json === 'function')) {
+        return nested;
+    }
+    return null;
+}
+
+/**
+ * Read a `Response` (or `safeFetch` envelope) body as UTF-8 text under a strict post-header
+ * timeout (`BODY_READ_TIMEOUT`) so stalled TCP streams cancel cleanly and never hang callers.
+ *
+ * @param {Response|{data?: {response?: Response}, response?: Response}} res - Fetch `Response` or `safeFetch` envelope
+ * @param {number} [timeoutMs=5000] - Maximum body read duration in milliseconds (`>= 1`)
+ * @returns {Promise<string>}
+ */
+export async function readTextWithTimeout(res, timeoutMs = 5_000) {
+    const response = resolveReadableResponseTarget(res);
+    if (!response) {
+        const invalidErr = new TypeError('Invalid response object passed to readTextWithTimeout.');
+        /** @type {any} */ (invalidErr).code = 'INVALID_RESPONSE_TARGET';
+        throw invalidErr;
+    }
+
+    const boundedMs = sanitizePositiveInt(timeoutMs, 5_000, 1);
+
+    if (response.body && typeof response.body.getReader === 'function') {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        const chunks = [];
+        let timer = null;
+        let timedOut = false;
+
+        try {
+            const timeoutPromise = new Promise((_, reject) => {
+                timer = setTimeout(() => {
+                    timedOut = true;
+                    const err = new Error(`Response text stream timed out after ${boundedMs}ms.`);
+                    /** @type {any} */ (err).code = 'BODY_READ_TIMEOUT';
+                    reader.cancel(err).catch(() => {});
+                    reject(err);
+                }, boundedMs);
+            });
+
+            const readLoop = (async () => {
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    if (value) {
+                        chunks.push(decoder.decode(value, { stream: true }));
+                    }
+                }
+                chunks.push(decoder.decode());
+                return chunks.join('');
+            })();
+
+            return await Promise.race([readLoop, timeoutPromise]);
+        } catch (err) {
+            if (!timedOut) {
+                await reader.cancel(err).catch(() => {});
+            }
+            throw err;
+        } finally {
+            if (timer !== null) {
+                clearTimeout(timer);
+            }
+            try {
+                reader.releaseLock();
+            } catch {
+                // Ignore if reader lock is still cancelling
+            }
+        }
+    }
+
+    if (typeof response.text !== 'function') {
+        const invalidErr = new TypeError('Invalid response object passed to readTextWithTimeout.');
+        /** @type {any} */ (invalidErr).code = 'INVALID_RESPONSE_TARGET';
+        throw invalidErr;
+    }
+
+    let timer = null;
+    try {
+        const timeoutPromise = new Promise((_, reject) => {
+            timer = setTimeout(() => {
+                const err = new Error(`Response text stream timed out after ${boundedMs}ms.`);
+                /** @type {any} */ (err).code = 'BODY_READ_TIMEOUT';
+                reject(err);
+            }, boundedMs);
+        });
+        return await Promise.race([response.text(), timeoutPromise]);
+    } catch (err) {
+        response.body?.cancel?.().catch?.(() => {});
+        throw err;
+    } finally {
+        if (timer !== null) {
+            clearTimeout(timer);
+        }
+    }
+}
+
+/**
+ * Parse a `Response` (or `safeFetch` envelope) JSON body under a strict post-header timeout
+ * (`BODY_READ_TIMEOUT`), cancelling stalled streams cleanly on timeout or invalid JSON.
+ *
+ * @param {Response|{data?: {response?: Response}, response?: Response}} res - Fetch `Response` or `safeFetch` envelope
+ * @param {number} [timeoutMs=5000] - Maximum body read duration in milliseconds (`>= 1`)
+ * @returns {Promise<any>}
+ */
+export async function readJsonWithTimeout(res, timeoutMs = 5_000) {
+    const response = resolveReadableResponseTarget(res);
+    if (!response) {
+        const invalidErr = new TypeError('Invalid response object passed to readJsonWithTimeout.');
+        /** @type {any} */ (invalidErr).code = 'INVALID_RESPONSE_TARGET';
+        throw invalidErr;
+    }
+    if (typeof response.text === 'function') {
+        const rawText = await readTextWithTimeout(response, timeoutMs);
+        const trimmed = rawText.trim();
+        return trimmed ? JSON.parse(trimmed) : null;
+    }
+    const boundedMs = sanitizePositiveInt(timeoutMs, 5_000, 1);
+    let timer = null;
+    try {
+        const timeoutPromise = new Promise((_, reject) => {
+            timer = setTimeout(() => {
+                const err = new Error(`Response JSON stream timed out after ${boundedMs}ms.`);
+                /** @type {any} */ (err).code = 'BODY_READ_TIMEOUT';
+                reject(err);
+            }, boundedMs);
+        });
+        return await Promise.race([response.json(), timeoutPromise]);
+    } catch (err) {
+        response.body?.cancel?.().catch?.(() => {});
+        throw err;
+    } finally {
+        if (timer !== null) {
+            clearTimeout(timer);
+        }
+    }
+}

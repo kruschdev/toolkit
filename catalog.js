@@ -438,14 +438,21 @@ const ranked = fuseRrfResults([ftsHits, vectorHits], { k: 60, idKey: 'id', limit
             'isPrivateOrReservedIp',
             'validateOutboundUrl',
             'safeFetch',
-            'createRateLimiter'
+            'createRateLimiter',
+            'DEFAULT_SCRUB_MARKERS',
+            'scrubSensitiveText',
+            'scrubSensitiveData',
+            'scrubPrivateNetworkStrings',
+            'readTextWithTimeout',
+            'readJsonWithTimeout'
         ],
-        summary: 'DNS-rebinding-safe SSRF IP/URL validator, redirect-checking safeFetch with cross-origin credential stripping, and bounded Map rate limiter.',
-        snippet: `import { safeFetch, createRateLimiter } from '@krusch/toolkit/security';
+        summary: 'DNS-rebinding-safe SSRF IP/URL validator, redirect-checking safeFetch, post-header stream timeout readers, cycle-safe secret/private-network scrubber, and bounded Map rate limiter.',
+        snippet: `import { safeFetch, readJsonWithTimeout, scrubSensitiveData, createRateLimiter } from '@krusch/toolkit/security';
 
 const limiter = createRateLimiter({ windowMs: 60_000, max: 30 });
-const upstream = await safeFetch(userProvidedUrl, { headers: { Accept: 'application/json' } }, { maxRedirects: 2 });`,
-        antiPatternDescription: 'Unvalidated fetch(userUrl) vulnerable to 169.254.169.254 metadata/DNS-rebinding SSRF, redirect credential leaks, or unbounded Map rate limiters.'
+const upstream = await safeFetch(userProvidedUrl, { headers: { Accept: 'application/json' } }, { maxRedirects: 2 });
+const data = upstream.ok ? scrubSensitiveData(await readJsonWithTimeout(upstream, 3_000)) : null;`,
+        antiPatternDescription: 'Unvalidated fetch(userUrl) vulnerable to 169.254.169.254 metadata/DNS-rebinding SSRF, stalled res.text() streams, hand-rolled secret/IP regex scrubbers, or unbounded Map rate limiters.'
     }),
     freezeBrick({
         id: 'lego-scout',

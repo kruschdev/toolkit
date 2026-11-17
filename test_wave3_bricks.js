@@ -246,6 +246,110 @@ test('INV-LEGO-13: @krusch/toolkit/security blocks IPv4/IPv6/6to4/Teredo/metadat
     assert.equal(JSON.parse(bodyOut).error.code, 'RATE_LIMITED');
 });
 
+test('INV-LEGO-13B: @krusch/toolkit/security scrubSensitiveData & readTextWithTimeout/readJsonWithTimeout redact secrets/IPs/cycles and cancel stalled streams', async () => {
+    const {
+        DEFAULT_SCRUB_MARKERS,
+        scrubSensitiveText,
+        scrubSensitiveData,
+        scrubPrivateNetworkStrings,
+        readTextWithTimeout,
+        readJsonWithTimeout
+    } = await import('./security.js');
+
+    assert.equal(scrubPrivateNetworkStrings, scrubSensitiveData);
+
+    // 1. String & nested object scrubbing (secrets, Bearer, URL creds, private/Tailscale/ULA hosts, host paths, emails)
+    const sampleSecret = `${'sk-' + 'or-v1-abcdef0123456789abcdef0123456789'}`;
+    const sampleTailIp = `${'100.105' + '.10.20'}`;
+    const sampleLanUrl = `http://${'192.168' + '.1.50'}:8443/v1/graphs`;
+    const sampleHomePath = `${'/' + 'home/alice'}/workspace/.env`;
+    const sampleMntPath = `${'/' + 'mnt/storage'}/hydradb/store`;
+    const sampleEmail = `${'ops@example' + '.org'}`;
+
+    const cyclic = { label: `Connect ${sampleLanUrl} from ${sampleHomePath}` };
+    cyclic.self = cyclic;
+
+    const deepRoot = { level: 0 };
+    let cursor = deepRoot;
+    for (let i = 1; i <= 6; i += 1) {
+        cursor.next = { level: i, note: `tail=${sampleTailIp}` };
+        cursor = cursor.next;
+    }
+
+    const rawErr = Object.assign(new Error(`Auth failed: Bearer my-super-secret-jwt-token at ${sampleMntPath}`), {
+        code: 'ECONNREFUSED'
+    });
+
+    const inputPayload = {
+        authHeader: 'Basic dXNlcjpwYXNzd29yZDEyMzQ1Ng==',
+        apiKey: 'plain-unprefixed-value-redacted-by-key-name',
+        clientSecret: 'another-plain-secret-by-key-name',
+        inlineEntry: `key=${sampleSecret} contact=${sampleEmail}`,
+        dsn: `postgres://dbadmin:s3cr3tPass@${'10.10' + '.10.2'}:5432/appdb`,
+        tailscaleV6: 'Reachable at [fd7a:115c:a1e0::1234]:9090 or fd00:1234:5678:9abc::1',
+        urlObj: new URL('http://127.0.0.1:4190/health'),
+        err: rawErr,
+        cycle: cyclic,
+        deep: deepRoot
+    };
+
+    const scrubbed = scrubSensitiveData(inputPayload, { maxDepth: 4 });
+    assert.equal(scrubbed.authHeader, `Basic ${DEFAULT_SCRUB_MARKERS.token}`);
+    assert.equal(scrubbed.apiKey, DEFAULT_SCRUB_MARKERS.secret);
+    assert.equal(scrubbed.clientSecret, DEFAULT_SCRUB_MARKERS.secret);
+    assert.ok(!scrubbed.inlineEntry.includes(sampleSecret));
+    assert.ok(!scrubbed.inlineEntry.includes(sampleEmail));
+    assert.ok(scrubbed.inlineEntry.includes(DEFAULT_SCRUB_MARKERS.secret));
+    assert.ok(scrubbed.inlineEntry.includes(DEFAULT_SCRUB_MARKERS.email));
+    assert.ok(scrubbed.dsn.includes(DEFAULT_SCRUB_MARKERS.credentials));
+    assert.ok(scrubbed.dsn.includes(DEFAULT_SCRUB_MARKERS.privateHost));
+    assert.ok(!scrubbed.tailscaleV6.includes('fd7a:115c:a1e0'));
+    assert.equal(scrubbed.urlObj, DEFAULT_SCRUB_MARKERS.privateUrl);
+    assert.deepEqual(scrubbed.err, {
+        name: 'Error',
+        message: `Auth failed: Bearer ${DEFAULT_SCRUB_MARKERS.token} at ${DEFAULT_SCRUB_MARKERS.localPath}`,
+        code: 'ECONNREFUSED'
+    });
+    assert.equal(scrubbed.cycle.label, `Connect ${DEFAULT_SCRUB_MARKERS.privateUrl} from ${DEFAULT_SCRUB_MARKERS.localPath}`);
+    assert.equal(scrubbed.cycle.self, DEFAULT_SCRUB_MARKERS.circular);
+    assert.equal(scrubbed.deep.next.next.next.next, DEFAULT_SCRUB_MARKERS.maxDepth);
+
+    // Optional flags preserve emails/paths when caller opts out
+    const keepEmail = scrubSensitiveText(`Author: ${sampleEmail}`, { redactEmails: false });
+    assert.equal(keepEmail, `Author: ${sampleEmail}`);
+
+    // 2. Post-header stream timeout readers unwrap safeFetch envelopes and cancel stalled streams
+    const okSafeFetchEnvelope = {
+        ok: true,
+        data: {
+            response: new Response(JSON.stringify({ status: 'healthy', count: 3 }), { status: 200 })
+        }
+    };
+    const parsedJson = await readJsonWithTimeout(okSafeFetchEnvelope, 500);
+    assert.deepEqual(parsedJson, { status: 'healthy', count: 3 });
+
+    const emptyRes = new Response('   ', { status: 200 });
+    assert.equal(await readJsonWithTimeout(emptyRes, 500), null);
+
+    let streamCancelled = false;
+    const stalledStream = new ReadableStream({
+        start() {
+            // Intentionally never enqueue or close to simulate a stalled post-header TCP stream
+        },
+        cancel() {
+            streamCancelled = true;
+        }
+    });
+    const stalledResponse = new Response(stalledStream, { status: 200 });
+    await assert.rejects(
+        () => readTextWithTimeout(stalledResponse, 35),
+        (err) => err?.code === 'BODY_READ_TIMEOUT'
+    );
+    // Allow microtask queue to settle stream cancel callback
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(streamCancelled, true, 'Stalled Response body stream must be cancelled on timeout');
+});
+
 test('INV-LEGO-15: @krusch/toolkit/lego-scout & krusch-lego scout enforce symlink containment, Rule-of-3 vs anti-bloat, and portable paths', async () => {
     const { scoutHomelabLegoCandidates } = await import('./lego-scout.js');
     const { auditBoilerplateText } = await import('./catalog.js');

@@ -15,7 +15,7 @@ export declare function extractSymbolsAndImports(
 ): ExtractedSymbolsResult;
 
 // ============================================================================
-// 2. browser.js — Stealth Puppeteer & Gemini 4 Argon Visual Audit Bridge
+// 2. browser.js — Stealth Puppeteer, CDP Bridge, HITL Lease & Argon Visual Audit
 // ============================================================================
 export interface ResponsiveBreakpoint {
     name: string;
@@ -23,9 +23,69 @@ export interface ResponsiveBreakpoint {
     height: number;
 }
 
+export interface InputRedactorState {
+    entryCount: number;
+    usedBytes: number;
+    maxBytes: number;
+    minLength: number;
+    saturated: boolean;
+    screenshotsBlocked: boolean;
+    screenshotsAllowed: boolean;
+}
+
+export interface InputRedactor {
+    recordInput(text: string, options?: { includeSubstrings?: boolean }): InputRedactorState;
+    markHumanTakeover(): InputRedactorState;
+    scrubText<T>(input: T): T;
+    scrubValue<T = any>(value: T): {
+        ok: boolean;
+        saturated: boolean;
+        redacted?: boolean;
+        screenshotsAllowed?: boolean;
+        data: T | null;
+        summary?: string;
+    };
+    screenshotsAllowed(): boolean;
+    getState(): InputRedactorState;
+}
+
+export interface BrowserControlLease {
+    redactor: InputRedactor;
+    getStatus(): Record<string, any>;
+    assertAgentCanAct(actionName?: string): boolean;
+    assertScreenshotAllowed(): boolean;
+    requestHuman(reason: string, meta?: Record<string, any>): Promise<Record<string, any>>;
+    takeover(actor?: string): Record<string, any>;
+    recordHumanInput(text: string, options?: { includeSubstrings?: boolean }): InputRedactorState;
+    releaseToAgent(resolution?: 'resumed' | 'skipped'): Record<string, any>;
+    waitForAgentControl(options?: { timeoutMs?: number; signal?: AbortSignal }): Promise<Record<string, any>>;
+    runGuardedStep<T = any>(actionName: string, fn: () => Promise<T> | T): Promise<ReturnType<InputRedactor['scrubValue']>>;
+}
+
 export declare const DEFAULT_RESPONSIVE_BREAKPOINTS: readonly ResponsiveBreakpoint[];
+export declare const DEFAULT_REDACTION_MARKER: string;
+export declare const DEFAULT_REDACTION_MIN_LENGTH: number;
+export declare const DEFAULT_REDACTION_MAX_BYTES: number;
 
 export declare function launchBrowser(options?: Record<string, any>): Promise<any>;
+
+export declare function connectBrowserOverCdp(
+    endpointOrOptions?: string | Record<string, any>,
+    extraOptions?: Record<string, any>
+): Promise<any>;
+
+export declare function createInputRedactor(options?: {
+    minLength?: number;
+    maxBytes?: number;
+    marker?: string;
+}): InputRedactor;
+
+export declare function createBrowserControlLease(options?: {
+    sessionId?: string;
+    redactor?: InputRedactor;
+    redactorOptions?: { minLength?: number; maxBytes?: number; marker?: string };
+    onNeedsHuman?: (event: Record<string, any>) => void | Promise<void>;
+}): BrowserControlLease;
 
 export declare function scrapeHtml(
     url: string,
