@@ -310,7 +310,7 @@ test('INV-LEGO-01 & INV-LEGO-04: @krusch/toolkit/catalog, scaffoldProject, and k
     const { listLegoBricks, listArchetypes, auditBoilerplateText } = await import('./catalog.js');
     const { scaffoldProject } = await import('./scaffold.js');
 
-    assert.equal(listLegoBricks().length, 39);
+    assert.equal(listLegoBricks().length, 40);
     assert.equal(listLegoBricks({ runtime: 'edge' }).length, 1);
     const archetypes = listArchetypes();
     assert.equal(archetypes.length, 7);

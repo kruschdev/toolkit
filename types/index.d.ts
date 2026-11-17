@@ -1045,3 +1045,57 @@ export type {
     PolyglotRepositoryAuditData
 } from './polyglot-audit.js';
 
+// Multi-Programmer Validated Brick Exchange, Ed25519 Lineage Seal & Scoped Grants (@krusch/toolkit/brick-exchange)
+export {
+    DEFAULT_SANDBOX_TIMEOUT_MS,
+    DEFAULT_SANDBOX_MAX_MEMORY_MB,
+    MAX_BRICK_SOURCE_BYTES,
+    canonicalBrickHash,
+    computeCanonicalHash,
+    scanBrickSourceSafety,
+    transpileBrickSourceToCjs,
+    executeInBrickSandbox,
+    runBrickVerificationGates,
+    derivePublicKeyId,
+    generateBrickSigningKeyPair,
+    sealVerifiedBrick,
+    verifyBrickBundle,
+    canPublishBrick,
+    canReceiveBrick,
+    createBrickExchangeStore,
+    tryBrickLocally,
+    adoptBrickIntoRepo,
+    auditRepoBrickLocks,
+    renderBrickExchangeConsoleHtml,
+    createBrickExchangeServer,
+    BRICK_EXCHANGE_MCP_TOOLS,
+    createBrickExchangeMcpServer,
+    extractRepoAstGraph,
+    analyzeBrickBlastRadius,
+    planAgentFanOut,
+    verifyTwoHopBlastRadius,
+    sealBrick,
+    runBrickRepairLoop
+} from './brick-exchange.js';
+export type {
+    BrickSafetyFinding,
+    BrickSafetyData,
+    BrickBlueprint,
+    BrickPositiveCheck,
+    BrickFaultCheck,
+    BrickCheckOutcome,
+    BrickRepairHint,
+    BrickVerificationData,
+    BrickLineage,
+    BrickAttestation,
+    SealedBrickBundle,
+    BrickGrantScope,
+    BrickReceiveMode,
+    BrickOrg,
+    BrickMember,
+    BrickGrant,
+    BrickRecipientSuggestion,
+    BrickExchangeStore
+} from './brick-exchange.js';
+
+

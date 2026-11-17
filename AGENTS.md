@@ -1,8 +1,8 @@
-# @krusch/toolkit (`v1.8.0` Node/TS/Edge & `v1.6.0` Python Lego System)
+# @krusch/toolkit (`v1.8.1` Node/TS/Edge & `v1.6.0` Python Lego System)
 
 ## Core Mandate ("Build With Legos, Not The Legos")
 
-Never hand-roll HTTP/Express boilerplate, SSE headers, MCP stdio servers, raw `pg.Pool` / `better-sqlite3` / `node:sqlite` `DatabaseSync` handles, `multer` upload middleware, unsafe `yaml.load`, manual payload schema validators, outbound SSRF regexes, webhook HMAC checks, non-atomic `Idempotency-Key` checks, mutable compliance audit tables, scattered role/tenant IDOR guards, unsigned pagination cursors, Cloudflare Worker routers, or un-aborted React `fetch` hooks in downstream projects. Stamp starter files via `npx krusch-lego stamp <archetype> <dir>` (`node-api-sqlite`, `node-ts-service`, `node-rag-pgvector`, `mcp-stdio-server`, `fullstack-react-vite`, `python-fastapi-service`, `cloudflare-worker`) and import typed runtime bricks directly from `@krusch/toolkit/*` or `krusch_toolkit.*`.
+Never hand-roll HTTP/Express boilerplate, SSE headers, MCP stdio servers, raw `pg.Pool` / `better-sqlite3` / `node:sqlite` `DatabaseSync` handles, `multer` upload middleware, unsafe `yaml.load`, manual payload schema validators, outbound SSRF regexes, webhook HMAC checks, non-atomic `Idempotency-Key` checks, mutable compliance audit tables, scattered role/tenant IDOR guards, unsigned pagination cursors, unverified cross-team snippet copy-paste, Cloudflare Worker routers, or un-aborted React `fetch` hooks in downstream projects. Stamp starter files via `npx krusch-lego stamp <archetype> <dir>` (`node-api-sqlite`, `node-ts-service`, `node-rag-pgvector`, `mcp-stdio-server`, `fullstack-react-vite`, `python-fastapi-service`, `cloudflare-worker`) and import typed runtime bricks directly from `@krusch/toolkit/*` or `krusch_toolkit.*`.
 
 ## Edge Swarm
 
@@ -11,7 +11,7 @@ Never hand-roll HTTP/Express boilerplate, SSE headers, MCP stdio servers, raw `p
   base: qwen2.5-coder:7b
   temperature: 0.2
   skill: |
-    You are the toolkit librarian. Audit core JavaScript modules and TypeScript `.d.ts` declarations (http.js, streaming.js, mcp-server.js, pg.js, sqlite.js, security.js, idempotency.js, audit-log.js, rbac.js, pagination.js, schema.js, yaml.js, upload.js, cascade.js, audio.js, lego-scout.js, db.js, react.js, edge.js, webhooks.js, cli.js, catalog.js, scaffold.js, llm.js, vision.js, browser.js, types/*.d.ts) and ensure every subpath in `package.json` `exports` exists on disk with matching `.d.ts` types and zero private leaks (`npm run verify:zero-leaks`).
+    You are the toolkit librarian. Audit core JavaScript modules and TypeScript `.d.ts` declarations (http.js, streaming.js, mcp-server.js, pg.js, sqlite.js, security.js, idempotency.js, audit-log.js, rbac.js, pagination.js, brick-exchange.js, brick-exchange/*.js, schema.js, yaml.js, upload.js, cascade.js, audio.js, lego-scout.js, db.js, react.js, edge.js, webhooks.js, cli.js, catalog.js, scaffold.js, llm.js, vision.js, browser.js, types/*.d.ts) and ensure every subpath in `package.json` `exports` exists on disk with matching `.d.ts` types and zero private leaks (`npm run verify:zero-leaks`).
 - name: backend-lego-expert
   base: gemma4:e4b
   skill: |
@@ -26,6 +26,7 @@ Never hand-roll HTTP/Express boilerplate, SSE headers, MCP stdio servers, raw `p
     - import { createAuditLog, verifyAuditChain, computeAuditEntryHash } from '@krusch/toolkit/audit-log'
     - import { createRbacPolicy, evaluateAccess, assertTenantOwnership, createRbacGuard } from '@krusch/toolkit/rbac'
     - import { clampPageLimit, encodeCursor, decodeCursor, buildKeysetPage, paginateItems } from '@krusch/toolkit/pagination'
+    - import { sealBrick, verifyBrickBundle, tryBrickLocally, adoptBrickIntoRepo, analyzeBrickBlastRadius, planAgentFanOut, verifyTwoHopBlastRadius } from '@krusch/toolkit/brick-exchange'
     - import { s, toJsonSchema, validateSchema, createSchemaMiddleware } from '@krusch/toolkit/schema'
     - import { parseSafeYaml, stringifySafeYaml, validateYamlConfig, loadSafeYamlPack } from '@krusch/toolkit/yaml'
     - import { parseBoundedMultipart, verifyUploadMime, sanitizeUploadFilename } from '@krusch/toolkit/upload'

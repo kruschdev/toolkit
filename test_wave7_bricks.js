@@ -14,7 +14,7 @@ test('INV-LEGO-31..34: catalog registers 39 runtime bricks, CLI inspects all 4 W
     const { RUNTIME_BRICKS, getLegoBrick, scoreLegoBrickCoverage } = await import('./catalog.js');
     const rootBarrel = await import('./index.js');
 
-    assert.equal(RUNTIME_BRICKS.length, 39);
+    assert.equal(RUNTIME_BRICKS.length, 40);
 
     for (const [id, importPath, expectedExports] of [
         ['idempotency', '@krusch/toolkit/idempotency', [

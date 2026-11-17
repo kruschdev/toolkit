@@ -814,6 +814,44 @@ const limit = clampPageLimit(req.query.limit, { defaultLimit: 25, maxLimit: 100 
 const cursor = req.query.cursor ? decodeCursor(req.query.cursor, { secret: process.env.CURSOR_SECRET, expectedScope: req.user.tenantId }) : null;
 const page = buildKeysetPage(rows, { limit, sortField: 'createdAt', idField: 'id', secret: process.env.CURSOR_SECRET, scope: req.user.tenantId });`,
         antiPatternDescription: 'Unbounded ?limit=9999999 queries causing OOMs, slow OFFSET scans, or unsigned base64 cursors vulnerable to cross-tenant cursor tampering.'
+    }),
+    freezeBrick({
+        id: 'brick-exchange',
+        runtime: 'node',
+        importPath: '@krusch/toolkit/brick-exchange',
+        exports: [
+            'scanBrickSourceSafety',
+            'executeInBrickSandbox',
+            'runBrickVerificationGates',
+            'generateBrickSigningKeyPair',
+            'sealVerifiedBrick',
+            'verifyBrickBundle',
+            'canPublishBrick',
+            'canReceiveBrick',
+            'createBrickExchangeStore',
+            'tryBrickLocally',
+            'adoptBrickIntoRepo',
+            'auditRepoBrickLocks',
+            'createBrickExchangeServer',
+            'createBrickExchangeMcpServer',
+            'extractRepoAstGraph',
+            'analyzeBrickBlastRadius',
+            'planAgentFanOut',
+            'verifyTwoHopBlastRadius',
+            'sealBrick',
+            'runBrickRepairLoop'
+        ],
+        summary: 'Cryptographically attested multi-programmer Validated Brick Exchange with Node 22 --permission sandbox, 4-gate Ed25519 sealing, scoped grants, local binding verification, and .brick-lock.json drift gate.',
+        snippet: `import { sealBrick, tryBrickLocally, adoptBrickIntoRepo } from '@krusch/toolkit/brick-exchange';
+import { s } from '@krusch/toolkit/schema';
+
+const sealed = await sealBrick({
+  blueprint: { id: 'cadence-check', inputSchema: s.array(s.number()), outputSchema: s.object({ gaps: s.number() }) },
+  source: 'export default (rows, binding) => ({ gaps: rows.filter(x => x < (binding.min ?? 0)).length });',
+  positiveChecks: [{ name: 'clean series', input: [1, 2, 3], expectedOutput: { gaps: 0 } }],
+  faultChecks: [{ name: 'catches injected drop', input: [1, -5, 3], expectedOutput: { gaps: 1 } }]
+});`,
+        antiPatternDescription: 'Copy-pasting unverified cross-team snippets without sandboxed fault-challenge tests, Ed25519 lineage attestations, scoped revocable grants, or SHA-256 lockfile drift checks.'
     })
 ]);
 

@@ -22,8 +22,22 @@ import {
     auditBoilerplateText,
     scoreLegoBrickCoverage
 } from '../catalog.js';
+import { attachGracefulShutdown } from '../http.js';
 import { scaffoldProject } from '../scaffold.js';
 import { scoutHomelabLegoCandidates } from '../lego-scout.js';
+import {
+    generateBrickSigningKeyPair,
+    sealBrick,
+    verifyBrickBundle,
+    createBrickExchangeStore,
+    tryBrickLocally,
+    adoptBrickIntoRepo,
+    auditRepoBrickLocks,
+    createBrickExchangeServer,
+    createBrickExchangeMcpServer,
+    analyzeBrickBlastRadius,
+    planAgentFanOut
+} from '../brick-exchange.js';
 
 const TOOL_NAME = 'krusch-lego';
 const VALID_RUNTIMES = new Set(['node', 'python', 'react', 'edge']);
@@ -131,7 +145,41 @@ function parseCliArgs(argv = []) {
         runtime: '',
         name: '',
         port: undefined,
-        minProjects: undefined
+        minProjects: undefined,
+        out: '',
+        key: '',
+        pubKey: '',
+        input: '',
+        binding: '',
+        grant: '',
+        by: '',
+        db: '',
+        actor: '',
+        issuer: '',
+        to: '',
+        hash: '',
+        expiresDays: undefined,
+        viewer: '',
+        query: '',
+        repoRoot: ''
+    };
+
+    const stringFlagMap = {
+        '--out': 'out',
+        '--key': 'key',
+        '--pub-key': 'pubKey',
+        '--input': 'input',
+        '--binding': 'binding',
+        '--grant': 'grant',
+        '--by': 'by',
+        '--db': 'db',
+        '--actor': 'actor',
+        '--issuer': 'issuer',
+        '--to': 'to',
+        '--hash': 'hash',
+        '--viewer': 'viewer',
+        '--query': 'query',
+        '--repo-root': 'repoRoot'
     };
 
     for (let i = 0; i < argv.length; i++) {
@@ -167,6 +215,20 @@ function parseCliArgs(argv = []) {
             flags.minProjects = Number(argv[++i]);
         } else if (token.startsWith('--min-projects=')) {
             flags.minProjects = Number(token.slice('--min-projects='.length));
+        } else if (token === '--expires-days') {
+            flags.expiresDays = Number(argv[++i]);
+        } else if (token.startsWith('--expires-days=')) {
+            flags.expiresDays = Number(token.slice('--expires-days='.length));
+        } else if (Object.hasOwn(stringFlagMap, token)) {
+            flags[stringFlagMap[token]] = String(argv[++i] ?? '').trim();
+        } else {
+            const eqIdx = token.indexOf('=');
+            if (eqIdx > 0) {
+                const prefix = token.slice(0, eqIdx);
+                if (Object.hasOwn(stringFlagMap, prefix)) {
+                    flags[stringFlagMap[prefix]] = token.slice(eqIdx + 1).trim();
+                }
+            }
         }
     }
 
@@ -271,10 +333,38 @@ export async function runCli(argv = process.argv.slice(2), io = {}) {
             '  krusch-lego inspect <brickOrArchetypeId> [--json]',
             '  krusch-lego stamp <archetype> [targetDir] [--name <projectName>] [--port <port>] [--force] [--dry-run] [--json]',
             '  krusch-lego audit <fileOrDir> [--json]',
-            '  krusch-lego scout [projectsDir] [--min-projects <n>] [--portable] [--json]'
+            '  krusch-lego scout [projectsDir] [--min-projects <n>] [--portable] [--json]',
+            '  krusch-lego keygen [--out <dir>] [--json]',
+            '  krusch-lego seal <specJsonPath> [--out <bundlePath>] [--key <privateKeyPemPath>] [--db <sqlitePath>] [--json]',
+            '  krusch-lego verify <bundlePath> [--pub-key <publicKeyPemPath>] [--json]',
+            '  krusch-lego try <bundlePath> --input <jsonOrFile> [--binding <jsonFile>] [--json]',
+            '  krusch-lego adopt <bundlePath> [targetRepoDir] [--binding <file>] [--grant <grantId>] [--by <memberId>] [--db <sqlitePath>] [--json]',
+            '  krusch-lego suggest <brickId> --db <sqlitePath> --actor <memberId> [--repo-root <dir>] [--json]',
+            '  krusch-lego share <brickId> --db <sqlitePath> --issuer <memberId> --to <csvRecipients> [--hash <sourceHash>] [--expires-days <n>] [--json]',
+            '  krusch-lego revoke <grantId> --db <sqlitePath> --actor <memberId> [--json]',
+            '  krusch-lego inbox --db <sqlitePath> --viewer <memberId> [--query <q>] [--json]',
+            '  krusch-lego hub [--db <sqlitePath>] [--port <port>] [--json]',
+            '  krusch-lego mcp [--db <sqlitePath>]'
         ];
         const payload = okOut('Displayed krusch-lego usage', {
-            commands: ['list', 'inspect', 'stamp', 'audit', 'scout'],
+            commands: [
+                'list',
+                'inspect',
+                'stamp',
+                'audit',
+                'scout',
+                'keygen',
+                'seal',
+                'verify',
+                'try',
+                'adopt',
+                'suggest',
+                'share',
+                'revoke',
+                'inbox',
+                'hub',
+                'mcp'
+            ],
             runtimes: [...VALID_RUNTIMES]
         });
         emitResponse(payload, flags.json, helpLines, writeOut, writeErr);
@@ -441,29 +531,45 @@ export async function runCli(argv = process.argv.slice(2), io = {}) {
             estimatedAuditTokensSaved
         } = coverage.data;
 
-        const clean = findings.length === 0;
+        const lockAudit = fs.statSync(resolvedTarget).isDirectory()
+            ? auditRepoBrickLocks(resolvedTarget)
+            : { ok: true, data: { lockfilePresent: false, lockedBrickCount: 0, clean: true, findings: [] } };
+        const brickLockFindings = Array.isArray(lockAudit.data?.findings)
+            ? lockAudit.data.findings.map((lf) => ({
+                  filePath: lf.filePath || path.join(resolvedTarget, lf.relativePath || '.brick-lock.json'),
+                  ruleId: lf.ruleId || lf.code || 'BRICK_LOCK_DRIFT',
+                  brickId: lf.brickId || 'brick-exchange',
+                  importPath: '@krusch/toolkit/brick-exchange',
+                  severity: 'error',
+                  message: lf.message || 'Vendored sealed brick drifted from .brick-lock.json attestation'
+              }))
+            : [];
+
+        const allFindings = [...findings, ...brickLockFindings];
+        const clean = allFindings.length === 0;
         const summary = clean
             ? `Audited ${files.length} file(s): zero hand-rolled boilerplate findings`
-            : `Audited ${files.length} file(s): found ${findings.length} boilerplate anti-pattern(s) across ${flaggedFileCount} file(s)`;
+            : `Audited ${files.length} file(s): found ${allFindings.length} finding(s) (${findings.length} boilerplate, ${brickLockFindings.length} brick-lock drift)`;
 
         const payload = okOut(summary, {
             target: resolvedTarget,
             scannedFiles: files.length,
-            flaggedFiles: flaggedFileCount,
+            flaggedFiles: flaggedFileCount + brickLockFindings.length,
             clean,
             sealedFiles,
             sealedBrickIds,
             sealedTouchpoints,
             recommendedBrickIds,
             sealedCoverageRatio,
-            breakerTripped,
+            breakerTripped: breakerTripped || brickLockFindings.length > 0,
             estimatedAuditTokensSaved,
-            findings
+            brickLockStatus: lockAudit.data,
+            findings: allFindings
         });
 
         const lines = [
             summary,
-            ...findings.map(
+            ...allFindings.map(
                 (f) => `  - [${f.ruleId}] ${f.filePath} -> use ${f.importPath}: ${f.message}`
             )
         ];
@@ -517,9 +623,496 @@ export async function runCli(argv = process.argv.slice(2), io = {}) {
         return { exitCode: 0, payload };
     }
 
+    if (command === 'keygen') {
+        const keyRes = generateBrickSigningKeyPair();
+        if (!keyRes.ok) {
+            emitResponse(keyRes, flags.json, [], writeOut, writeErr);
+            return { exitCode: 1, payload: keyRes };
+        }
+        let savedPaths = null;
+        if (flags.out) {
+            const outDir = path.resolve(flags.out);
+            fs.mkdirSync(outDir, { recursive: true });
+            const privPath = path.join(outDir, 'brick-signing.key.pem');
+            const pubPath = path.join(outDir, 'brick-signing.pub.pem');
+            fs.writeFileSync(privPath, keyRes.data.privateKeyPem, { mode: 0o600 });
+            fs.writeFileSync(pubPath, keyRes.data.publicKeyPem, 'utf8');
+            savedPaths = { privateKeyPath: privPath, publicKeyPath: pubPath };
+        }
+        const payload = okOut(keyRes.summary, {
+            ...keyRes.data,
+            ...(savedPaths ? savedPaths : {})
+        });
+        const lines = [
+            keyRes.summary,
+            `Key ID: ${keyRes.data.keyId}`,
+            ...(savedPaths ? [`Saved:  ${savedPaths.privateKeyPath}, ${savedPaths.publicKeyPath}`] : [])
+        ];
+        emitResponse(payload, flags.json, lines, writeOut, writeErr);
+        return { exitCode: 0, payload };
+    }
+
+    if (command === 'seal') {
+        const specPathRaw = positionals[1] || '';
+        if (!specPathRaw) {
+            const payload = errOut(
+                'MISSING_SPEC',
+                'Usage: krusch-lego seal <specJsonPath> [--out <bundlePath>] [--key <privateKeyPemPath>] [--db <sqlitePath>] [--json]'
+            );
+            emitResponse(payload, flags.json, [], writeOut, writeErr);
+            return { exitCode: 1, payload };
+        }
+        const specAbs = path.resolve(specPathRaw);
+        if (!fs.existsSync(specAbs)) {
+            const payload = errOut('ENOENT', `Spec file not found: ${specAbs}`);
+            emitResponse(payload, flags.json, [], writeOut, writeErr);
+            return { exitCode: 1, payload };
+        }
+        let specObj;
+        try {
+            specObj = JSON.parse(fs.readFileSync(specAbs, 'utf8'));
+        } catch (err) {
+            const payload = errOut('INVALID_JSON', `Failed to parse spec JSON: ${err.message}`);
+            emitResponse(payload, flags.json, [], writeOut, writeErr);
+            return { exitCode: 1, payload };
+        }
+        const source =
+            typeof specObj.source === 'string'
+                ? specObj.source
+                : specObj.sourceFile
+                  ? fs.readFileSync(path.resolve(path.dirname(specAbs), specObj.sourceFile), 'utf8')
+                  : '';
+        const privateKeyPem = flags.key
+            ? fs.readFileSync(path.resolve(flags.key), 'utf8')
+            : specObj.privateKeyPem || '';
+        const sealRes = await sealBrick({
+            ...specObj,
+            source,
+            privateKeyPem
+        });
+        if (!sealRes.ok) {
+            const payload = errOut(
+                sealRes.error?.code || 'SEAL_FAILED',
+                sealRes.error?.message || 'Brick failed verification gates',
+                sealRes.error?.details ?? null
+            );
+            emitResponse(payload, flags.json, [], writeOut, writeErr);
+            return { exitCode: 1, payload };
+        }
+        let outPath = null;
+        if (flags.out) {
+            outPath = path.resolve(flags.out);
+            fs.mkdirSync(path.dirname(outPath), { recursive: true });
+            fs.writeFileSync(outPath, JSON.stringify(sealRes.data.bundle, null, 2) + '\n', 'utf8');
+        }
+        let published = null;
+        if (flags.db) {
+            const store = createBrickExchangeStore({ dbPath: path.resolve(flags.db) });
+            try {
+                published = store.publishSealedBrick(sealRes.data.bundle, {
+                    actorId: flags.actor || sealRes.data.bundle.authorId
+                });
+            } finally {
+                store.close();
+            }
+        }
+        const payload = okOut(sealRes.summary, {
+            ...sealRes.data,
+            ...(outPath ? { outPath } : {}),
+            ...(published ? { published } : {})
+        });
+        const lines = [
+            sealRes.summary,
+            `Source Hash: ${sealRes.data.bundle.lineage.sourceHash}`,
+            `Key ID:      ${sealRes.data.bundle.attestation.keyId}`,
+            ...(outPath ? [`Bundle File: ${outPath}`] : [])
+        ];
+        emitResponse(payload, flags.json, lines, writeOut, writeErr);
+        return { exitCode: 0, payload };
+    }
+
+    if (command === 'verify') {
+        const bundlePathRaw = positionals[1] || '';
+        if (!bundlePathRaw) {
+            const payload = errOut(
+                'MISSING_BUNDLE',
+                'Usage: krusch-lego verify <bundlePath> [--pub-key <publicKeyPemPath>] [--json]'
+            );
+            emitResponse(payload, flags.json, [], writeOut, writeErr);
+            return { exitCode: 1, payload };
+        }
+        const bundleAbs = path.resolve(bundlePathRaw);
+        if (!fs.existsSync(bundleAbs)) {
+            const payload = errOut('ENOENT', `Bundle file not found: ${bundleAbs}`);
+            emitResponse(payload, flags.json, [], writeOut, writeErr);
+            return { exitCode: 1, payload };
+        }
+        const bundle = JSON.parse(fs.readFileSync(bundleAbs, 'utf8'));
+        const trustedPublicKeyPem = flags.pubKey ? fs.readFileSync(path.resolve(flags.pubKey), 'utf8') : null;
+        const verifyRes = verifyBrickBundle(bundle, { trustedPublicKeyPem });
+        if (!verifyRes.ok) {
+            const payload = errOut(
+                verifyRes.error?.code || 'VERIFY_FAILED',
+                verifyRes.error?.message || 'Bundle verification failed',
+                verifyRes.error?.details ?? null
+            );
+            emitResponse(payload, flags.json, [], writeOut, writeErr);
+            return { exitCode: 1, payload };
+        }
+        const payload = okOut(verifyRes.summary, verifyRes.data);
+        const lines = [
+            verifyRes.summary,
+            `Brick ID:    ${verifyRes.data.brickId}`,
+            `Source Hash: ${verifyRes.data.sourceHash}`,
+            `Key ID:      ${verifyRes.data.keyId}`
+        ];
+        emitResponse(payload, flags.json, lines, writeOut, writeErr);
+        return { exitCode: 0, payload };
+    }
+
+    if (command === 'try') {
+        const bundlePathRaw = positionals[1] || '';
+        if (!bundlePathRaw || !flags.input) {
+            const payload = errOut(
+                'MISSING_ARGS',
+                'Usage: krusch-lego try <bundlePath> --input <jsonOrFile> [--binding <jsonFile>] [--json]'
+            );
+            emitResponse(payload, flags.json, [], writeOut, writeErr);
+            return { exitCode: 1, payload };
+        }
+        const bundle = JSON.parse(fs.readFileSync(path.resolve(bundlePathRaw), 'utf8'));
+        const sampleInput = fs.existsSync(path.resolve(flags.input))
+            ? JSON.parse(fs.readFileSync(path.resolve(flags.input), 'utf8'))
+            : JSON.parse(flags.input);
+        const binding = flags.binding
+            ? fs.existsSync(path.resolve(flags.binding))
+                ? JSON.parse(fs.readFileSync(path.resolve(flags.binding), 'utf8'))
+                : JSON.parse(flags.binding)
+            : {};
+        const tryRes = await tryBrickLocally({ bundle, binding, sampleInput });
+        if (!tryRes.ok) {
+            const payload = errOut(
+                tryRes.error?.code || 'TRY_FAILED',
+                tryRes.error?.message || 'Local sandbox verification failed',
+                tryRes.error?.details ?? null
+            );
+            emitResponse(payload, flags.json, [], writeOut, writeErr);
+            return { exitCode: 1, payload };
+        }
+        const payload = okOut(tryRes.summary, tryRes.data);
+        const lines = [
+            tryRes.summary,
+            `Duration: ${tryRes.data.durationMs} ms`,
+            `Output:   ${JSON.stringify(tryRes.data.output)}`
+        ];
+        emitResponse(payload, flags.json, lines, writeOut, writeErr);
+        return { exitCode: 0, payload };
+    }
+
+    if (command === 'adopt') {
+        const bundlePathRaw = positionals[1] || '';
+        const targetRepoDir = positionals[2] || process.cwd();
+        if (!bundlePathRaw) {
+            const payload = errOut(
+                'MISSING_BUNDLE',
+                'Usage: krusch-lego adopt <bundlePath> [targetRepoDir] [--binding <file>] [--grant <grantId>] [--by <memberId>] [--db <sqlitePath>] [--json]'
+            );
+            emitResponse(payload, flags.json, [], writeOut, writeErr);
+            return { exitCode: 1, payload };
+        }
+        const bundle = JSON.parse(fs.readFileSync(path.resolve(bundlePathRaw), 'utf8'));
+        const bindingSource =
+            flags.binding && fs.existsSync(path.resolve(flags.binding))
+                ? fs.readFileSync(path.resolve(flags.binding), 'utf8')
+                : null;
+        const adoptRes = await adoptBrickIntoRepo({
+            bundle,
+            targetRepoDir: path.resolve(targetRepoDir),
+            bindingSource,
+            grantId: flags.grant || null,
+            adoptedBy: flags.by || 'cli-dev'
+        });
+        if (!adoptRes.ok) {
+            const payload = errOut(
+                adoptRes.error?.code || 'ADOPT_FAILED',
+                adoptRes.error?.message || 'Failed to adopt brick into repository',
+                adoptRes.error?.details ?? null
+            );
+            emitResponse(payload, flags.json, [], writeOut, writeErr);
+            return { exitCode: 1, payload };
+        }
+        let ledgerRecord = null;
+        if (flags.db && flags.by) {
+            const store = createBrickExchangeStore({ dbPath: path.resolve(flags.db) });
+            try {
+                ledgerRecord = await store.recordAdoption({
+                    userId: flags.by,
+                    brickId: bundle.brickId,
+                    sourceHash: bundle.lineage.sourceHash,
+                    grantId: flags.grant || null,
+                    localChecksPassed: true
+                });
+            } finally {
+                store.close();
+            }
+        }
+        const payload = okOut(adoptRes.summary, {
+            ...adoptRes.data,
+            ...(ledgerRecord ? { ledgerRecord } : {})
+        });
+        const lines = [
+            adoptRes.summary,
+            `Entry:    ${adoptRes.data.entryPath}`,
+            `Binding:  ${adoptRes.data.bindingPath}`,
+            `Lockfile: ${adoptRes.data.lockfilePath}`
+        ];
+        emitResponse(payload, flags.json, lines, writeOut, writeErr);
+        return { exitCode: 0, payload };
+    }
+
+    if (command === 'suggest') {
+        const brickId = positionals[1] || '';
+        if (!brickId || !flags.db || !flags.actor) {
+            const payload = errOut(
+                'MISSING_ARGS',
+                'Usage: krusch-lego suggest <brickId> --db <sqlitePath> --actor <memberId> [--repo-root <dir>] [--json]'
+            );
+            emitResponse(payload, flags.json, [], writeOut, writeErr);
+            return { exitCode: 1, payload };
+        }
+        const store = createBrickExchangeStore({ dbPath: path.resolve(flags.db) });
+        try {
+            const res = await store.suggestRecipients({
+                actorId: flags.actor,
+                brickId,
+                sourceHash: flags.hash || null,
+                repoRoot: flags.repoRoot ? path.resolve(flags.repoRoot) : null
+            });
+            if (!res.ok) {
+                const payload = errOut(res.error?.code || 'SUGGEST_FAILED', res.error?.message || 'Suggest failed');
+                emitResponse(payload, flags.json, [], writeOut, writeErr);
+                return { exitCode: 1, payload };
+            }
+            const payload = okOut(res.summary, res.data);
+            const lines = [
+                res.summary,
+                ...res.data.suggestions.map(
+                    (s) => `  - ${s.memberId} (${s.orgId}) [${s.deliveryChannel}] score=${s.score}: ${s.reason}`
+                )
+            ];
+            emitResponse(payload, flags.json, lines, writeOut, writeErr);
+            return { exitCode: 0, payload };
+        } finally {
+            store.close();
+        }
+    }
+
+    if (command === 'share') {
+        const brickId = positionals[1] || '';
+        const recipients = flags.to
+            ? flags.to
+                  .split(',')
+                  .map((x) => x.trim())
+                  .filter(Boolean)
+            : [];
+        if (!brickId || !flags.db || !flags.issuer || recipients.length === 0) {
+            const payload = errOut(
+                'MISSING_ARGS',
+                'Usage: krusch-lego share <brickId> --db <sqlitePath> --issuer <memberId> --to <csvRecipients> [--hash <sourceHash>] [--expires-days <n>] [--json]'
+            );
+            emitResponse(payload, flags.json, [], writeOut, writeErr);
+            return { exitCode: 1, payload };
+        }
+        const store = createBrickExchangeStore({ dbPath: path.resolve(flags.db) });
+        try {
+            let sourceHash = flags.hash;
+            if (!sourceHash) {
+                const visible = store.getVisibleBrick({ viewerId: flags.issuer, brickId });
+                if (visible.ok) {
+                    sourceHash = visible.data.bundle.lineage.sourceHash;
+                }
+            }
+            const days = Number.isFinite(flags.expiresDays) && flags.expiresDays > 0 ? flags.expiresDays : 30;
+            const expiresAt = new Date(Date.now() + days * 86_400_000).toISOString();
+            const res = store.issueGrant({
+                issuerId: flags.issuer,
+                brickId,
+                sourceHash,
+                scope: 'federated',
+                recipients,
+                expiresAt
+            });
+            if (!res.ok) {
+                const payload = errOut(res.error?.code || 'SHARE_FAILED', res.error?.message || 'Grant failed');
+                emitResponse(payload, flags.json, [], writeOut, writeErr);
+                return { exitCode: 1, payload };
+            }
+            const payload = okOut(res.summary, res.data);
+            const lines = [
+                res.summary,
+                `Grant ID:   ${res.data.grant.id}`,
+                `Recipients: ${res.data.grant.recipients.join(', ')}`,
+                `Expires:    ${res.data.grant.expiresAt}`
+            ];
+            emitResponse(payload, flags.json, lines, writeOut, writeErr);
+            return { exitCode: 0, payload };
+        } finally {
+            store.close();
+        }
+    }
+
+    if (command === 'revoke') {
+        const grantId = positionals[1] || '';
+        if (!grantId || !flags.db || !flags.actor) {
+            const payload = errOut(
+                'MISSING_ARGS',
+                'Usage: krusch-lego revoke <grantId> --db <sqlitePath> --actor <memberId> [--json]'
+            );
+            emitResponse(payload, flags.json, [], writeOut, writeErr);
+            return { exitCode: 1, payload };
+        }
+        const store = createBrickExchangeStore({ dbPath: path.resolve(flags.db) });
+        try {
+            const res = store.revokeGrant({ actorId: flags.actor, grantId });
+            if (!res.ok) {
+                const payload = errOut(res.error?.code || 'REVOKE_FAILED', res.error?.message || 'Revoke failed');
+                emitResponse(payload, flags.json, [], writeOut, writeErr);
+                return { exitCode: 1, payload };
+            }
+            const payload = okOut(res.summary, res.data);
+            emitResponse(payload, flags.json, [res.summary], writeOut, writeErr);
+            return { exitCode: 0, payload };
+        } finally {
+            store.close();
+        }
+    }
+
+    if (command === 'inbox') {
+        if (!flags.db || !flags.viewer) {
+            const payload = errOut(
+                'MISSING_ARGS',
+                'Usage: krusch-lego inbox --db <sqlitePath> --viewer <memberId> [--query <q>] [--json]'
+            );
+            emitResponse(payload, flags.json, [], writeOut, writeErr);
+            return { exitCode: 1, payload };
+        }
+        const store = createBrickExchangeStore({ dbPath: path.resolve(flags.db) });
+        try {
+            const res = store.listVisibleBricks({ viewerId: flags.viewer, query: flags.query || '' });
+            if (!res.ok) {
+                const payload = errOut(res.error?.code || 'INBOX_FAILED', res.error?.message || 'Inbox failed');
+                emitResponse(payload, flags.json, [], writeOut, writeErr);
+                return { exitCode: 1, payload };
+            }
+            const payload = okOut(res.summary, res.data);
+            const lines = [
+                res.summary,
+                ...res.data.bricks.map(
+                    (b) => `  - ${b.brickId}@${String(b.sourceHash || '').slice(0, 8)} (${b.orgId}) [${b.accessMode || 'authorized'}]`
+                )
+            ];
+            emitResponse(payload, flags.json, lines, writeOut, writeErr);
+            return { exitCode: 0, payload };
+        } finally {
+            store.close();
+        }
+    }
+
+    if (command === 'hub') {
+        const dbPath = flags.db ? path.resolve(flags.db) : ':memory:';
+        const listenPort = Number.isInteger(flags.port) && flags.port >= 0 ? flags.port : 4318;
+        const store = createBrickExchangeStore({ dbPath });
+        const server = createBrickExchangeServer({ store });
+        attachGracefulShutdown(server, { onShutdown: () => store.close() });
+        await new Promise((resolve) => server.listen(listenPort, '127.0.0.1', resolve));
+        const addr = server.address();
+        const actualPort = typeof addr === 'object' && addr ? addr.port : listenPort;
+        const payload = okOut(`Brick Exchange Hub listening on http://127.0.0.1:${actualPort}`, {
+            port: actualPort,
+            dbPath,
+            consoleUrl: `http://127.0.0.1:${actualPort}/`
+        });
+        emitResponse(payload, flags.json, [payload.summary], writeOut, writeErr);
+        return { exitCode: 0, payload };
+    }
+
+    if (command === 'mcp') {
+        const dbPath = flags.db ? path.resolve(flags.db) : ':memory:';
+        const store = createBrickExchangeStore({ dbPath });
+        await createBrickExchangeMcpServer({ store, connect: true });
+        return { exitCode: 0, payload: okOut('Brick Exchange MCP server connected over stdio', { dbPath }) };
+    }
+
+    if (command === 'blast-radius') {
+        const changedCsv = positionals[1] || '';
+        const repoDir = positionals[2] || process.cwd();
+        if (!changedCsv) {
+            const payload = errOut(
+                'MISSING_ARGS',
+                'Usage: krusch-lego blast-radius <changedFileCsv> [repoDir] [--json]'
+            );
+            emitResponse(payload, flags.json, [], writeOut, writeErr);
+            return { exitCode: 1, payload };
+        }
+        const changedFiles = changedCsv
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
+        const res = analyzeBrickBlastRadius({ repoDir: path.resolve(repoDir), changedFiles });
+        if (!res.ok) {
+            const payload = errOut(res.error?.code || 'BLAST_RADIUS_FAILED', res.error?.message || 'Blast radius failed');
+            emitResponse(payload, flags.json, [], writeOut, writeErr);
+            return { exitCode: 1, payload };
+        }
+        const payload = okOut(res.summary, res.data);
+        const lines = [
+            res.summary,
+            `Hop-1 Callers: ${res.data.hop1Dependents.join(', ') || '(none)'}`,
+            `Hop-2 Callers: ${res.data.hop2Dependents.join(', ') || '(none)'}`,
+            ...res.data.hopPaths.map((p) => `  Path: ${p}`)
+        ];
+        emitResponse(payload, flags.json, lines, writeOut, writeErr);
+        return { exitCode: 0, payload };
+    }
+
+    if (command === 'fanout') {
+        const tasksJsonPath = positionals[1] || '';
+        const repoDir = positionals[2] || process.cwd();
+        if (!tasksJsonPath || !fs.existsSync(path.resolve(tasksJsonPath))) {
+            const payload = errOut(
+                'MISSING_ARGS',
+                'Usage: krusch-lego fanout <tasksJsonPath> [repoDir] [--json]'
+            );
+            emitResponse(payload, flags.json, [], writeOut, writeErr);
+            return { exitCode: 1, payload };
+        }
+        const parsed = JSON.parse(fs.readFileSync(path.resolve(tasksJsonPath), 'utf8'));
+        const tasks = Array.isArray(parsed) ? parsed : parsed.tasks || [];
+        const protectedFiles = Array.isArray(parsed?.protectedFiles) ? parsed.protectedFiles : [];
+        const res = planAgentFanOut({
+            repoDir: path.resolve(repoDir),
+            tasks,
+            protectedFiles
+        });
+        if (!res.ok) {
+            const payload = errOut(res.error?.code || 'FANOUT_FAILED', res.error?.message || 'Fan-out plan failed', res.error?.details ?? null);
+            emitResponse(payload, flags.json, [], writeOut, writeErr);
+            return { exitCode: 1, payload };
+        }
+        const payload = okOut(res.summary, res.data);
+        const lines = [
+            res.summary,
+            ...res.data.waves.map(
+                (w) => `  Wave ${w.wave} (${w.parallelizable ? 'parallel' : 'serial'}): ${w.taskIds.join(', ')}`
+            )
+        ];
+        emitResponse(payload, flags.json, lines, writeOut, writeErr);
+        return { exitCode: 0, payload };
+    }
+
     const payload = errOut(
         'UNKNOWN_COMMAND',
-        `Unknown command "${command}". Expected one of: list, inspect, stamp, audit, scout`
+        `Unknown command "${command}". Expected one of: list, inspect, stamp, audit, scout, keygen, seal, verify, try, adopt, suggest, share, revoke, inbox, hub, mcp, blast-radius, fanout`
     );
     emitResponse(payload, flags.json, [], writeOut, writeErr);
     return { exitCode: 1, payload };
