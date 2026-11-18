@@ -1,0 +1,23 @@
+1
+00:00:00,240 --> 00:00:15,382
+Every engineering team hits this wall. One squad builds a solid login or billing helper, and the next team rewrites it from scratch because sharing raw repo files leaks private schemas and secrets. Add four AI agents at once, and they step right on each other's code.
+
+2
+00:00:15,853 --> 00:00:32,375
+At the EVOLVE hackathon, I built DEADBOLT to stop agents from breaking downstream files. Right after, I watched Anushka and Connor take 2nd place with Common Ground for safe cross-company code sharing. Both shipped under the MIT license, and the combo clicked right away.
+
+3
+00:00:32,887 --> 00:00:47,256
+So I fused both ideas into Brick Exchange. Every helper runs through four strict checks in a locked sandbox, including bad-input stress tests so lazy happy-path code gets rejected, then gets cryptographically signed so nothing can be tampered with.
+
+4
+00:00:47,773 --> 00:01:10,949
+Next, I built a Cross-Stack & Channel Ontology powered by HydraScope on HydraDB. Instead of flat tags, its OpenCypher graph maps 40 bricks across Node, TypeScript, Python FastAPI, React, and Cloudflare Edge, blocks Slack vs. Discord port mix-ups, chains 2-step pipelines, and generates verified local bindings with zero data uploaded.
+
+5
+00:01:11,520 --> 00:01:26,190
+Teammates can grab verified bricks right away, and outside partners can test them locally on private data using revocable passes. A lockfile flags any sneaky edits, while DEADBOLT schedules parallel coding agents in clean, conflict-free waves.
+
+6
+00:01:26,740 --> 00:01:37,599
+It's completely free under the MIT license, with full credit to Anushka and Connor's work on Common Ground. Grab the code on GitHub, or read the full story at krusch.dev.

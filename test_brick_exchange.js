@@ -460,7 +460,7 @@ test('INV-LEGO-35 Store, Tiered RBAC, HydraDB v2 Scoped Boost, Local Try, Repo L
         const ledgerStatus = store.verifyLedger();
         assert.equal(ledgerStatus.ok, true);
 
-        // HTTP Hub + Reuse Console + 8-tool MCP server smoke test
+        // HTTP Hub + Reuse Console + 10-tool MCP server smoke test
         server = createBrickExchangeServer({ store });
         await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
         const addr = server.address();

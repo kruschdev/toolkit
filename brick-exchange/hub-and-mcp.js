@@ -8,6 +8,8 @@
  * Common Ground contributors) onto `@krusch/toolkit` canonical HTTP, Webhook, and MCP bricks.
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
 import { createApiServer, okEnvelope, errorEnvelope } from '../http.js';
 import {
     defineMcpTool,
@@ -84,10 +86,10 @@ function cleanIdentifier(rawValue) {
 
 /**
  * Normalize `authTokens` config (`Map`, `Array`, or plain `Record<token, memberId>`) into
- * deterministic `[expectedToken, mappedMemberId | null]` entries.
+ * deterministic `{ secret, memberId, isWildcardAdmin }` entries.
  *
  * @param {Map<string, string|boolean>|string[]|Record<string, string|boolean>|null} authTokens
- * @returns {Array<[string, string|null]>}
+ * @returns {Array<{ secret: string, memberId: string|null, isWildcardAdmin: boolean }>}
  */
 function normalizeAuthTokens(authTokens) {
     if (!authTokens) return [];
@@ -97,11 +99,10 @@ function normalizeAuthTokens(authTokens) {
         for (const [token, member] of authTokens.entries()) {
             const cleanTok = typeof token === 'string' ? token.trim() : '';
             if (!cleanTok) continue;
-            const mapped =
-                typeof member === 'string' && member.trim().length > 0 && member.trim() !== '*'
-                    ? member.trim()
-                    : null;
-            entries.push([cleanTok, mapped]);
+            const rawMember = typeof member === 'string' ? member.trim() : '';
+            const isWildcardAdmin = member === '*' || rawMember === '*' || member === true;
+            const memberId = rawMember.length > 0 && rawMember !== '*' ? rawMember : null;
+            entries.push({ secret: cleanTok, memberId, isWildcardAdmin });
         }
         return entries;
     }
@@ -109,7 +110,9 @@ function normalizeAuthTokens(authTokens) {
     if (Array.isArray(authTokens)) {
         for (const token of authTokens) {
             const cleanTok = typeof token === 'string' ? token.trim() : '';
-            if (cleanTok) entries.push([cleanTok, null]);
+            if (cleanTok) {
+                entries.push({ secret: cleanTok, memberId: null, isWildcardAdmin: true });
+            }
         }
         return entries;
     }
@@ -118,15 +121,36 @@ function normalizeAuthTokens(authTokens) {
         for (const [token, member] of Object.entries(authTokens)) {
             const cleanTok = typeof token === 'string' ? token.trim() : '';
             if (!cleanTok) continue;
-            const mapped =
-                typeof member === 'string' && member.trim().length > 0 && member.trim() !== '*'
-                    ? member.trim()
-                    : null;
-            entries.push([cleanTok, mapped]);
+            const rawMember = typeof member === 'string' ? member.trim() : '';
+            const isWildcardAdmin = member === '*' || rawMember === '*' || member === true;
+            const memberId = rawMember.length > 0 && rawMember !== '*' ? rawMember : null;
+            entries.push({ secret: cleanTok, memberId, isWildcardAdmin });
         }
     }
 
     return entries;
+}
+
+function resolveRealOrDeepestAncestorPath(rawPath) {
+    const resolved = path.resolve(rawPath);
+    try {
+        return fs.realpathSync(resolved);
+    } catch {
+        let cur = resolved;
+        const suffix = [];
+        while (cur !== path.dirname(cur) && !fs.existsSync(cur)) {
+            suffix.unshift(path.basename(cur));
+            cur = path.dirname(cur);
+        }
+        if (fs.existsSync(cur)) {
+            try {
+                return path.join(fs.realpathSync(cur), ...suffix);
+            } catch {
+                return resolved;
+            }
+        }
+        return resolved;
+    }
 }
 
 /**
@@ -888,7 +912,9 @@ export function renderBrickExchangeConsoleHtml({ title = 'Brick Exchange Console
  * @param {string} [options.serviceName='krusch-brick-exchange-hub']
  * @param {string} [options.version='1.0.0']
  * @param {Map<string, string|boolean>|string[]|Record<string, string|boolean>|null} [options.authTokens=null]
- * @param {string[]} [options.corsOrigins=['*']]
+ * @param {string[]} [options.corsOrigins=[]]
+ * @param {string|null} [options.allowedWorkspaceRoot=null]
+ * @param {boolean} [options.allowHttpInvariantScripts=false]
  * @param {object|null} [options.logger=null]
  * @returns {import('node:http').Server}
  */
@@ -897,7 +923,9 @@ export function createBrickExchangeServer({
     serviceName = 'krusch-brick-exchange-hub',
     version = '1.0.0',
     authTokens = null,
-    corsOrigins = ['*'],
+    corsOrigins = [],
+    allowedWorkspaceRoot = null,
+    allowHttpInvariantScripts = false,
     logger = null,
 } = {}) {
     if (!store || typeof store !== 'object') {
@@ -906,21 +934,27 @@ export function createBrickExchangeServer({
 
     const tokenEntries = normalizeAuthTokens(authTokens);
     const authRequired = tokenEntries.length > 0;
+    const resolvedWorkspaceRoot =
+        typeof allowedWorkspaceRoot === 'string' && allowedWorkspaceRoot.trim().length > 0
+            ? resolveRealOrDeepestAncestorPath(allowedWorkspaceRoot.trim())
+            : null;
 
     /**
      * Authenticate incoming API request (when `authTokens` is configured) and resolve `viewerId`.
      *
      * @param {object} ctx
-     * @returns {{ ok: boolean, viewerId: string }}
+     * @returns {{ ok: boolean, viewerId: string, isWildcardAdmin: boolean }}
      */
     function authenticateAndResolveViewer(ctx) {
         const headerViewer = cleanIdentifier(ctx.req?.headers?.['x-brick-viewer']);
         const queryViewer = cleanIdentifier(ctx.query?.viewerId);
+        const requestedViewer = headerViewer || queryViewer;
 
         if (!authRequired) {
             return {
                 ok: true,
-                viewerId: headerViewer || queryViewer,
+                viewerId: requestedViewer,
+                isWildcardAdmin: false,
             };
         }
 
@@ -931,12 +965,16 @@ export function createBrickExchangeServer({
 
         let matched = false;
         let mappedMemberId = null;
-        for (const [expectedSecret, candidateMemberId] of tokenEntries) {
-            const check = verifyBearerToken(authHeader, expectedSecret, { tool: HUB_TOOL });
+        let matchedWildcardAdmin = false;
+        for (const entry of tokenEntries) {
+            const check = verifyBearerToken(authHeader, entry.secret, { tool: HUB_TOOL });
             if (check.ok) {
                 matched = true;
-                if (candidateMemberId && mappedMemberId === null) {
-                    mappedMemberId = candidateMemberId;
+                if (entry.isWildcardAdmin) {
+                    matchedWildcardAdmin = true;
+                }
+                if (entry.memberId && mappedMemberId === null) {
+                    mappedMemberId = entry.memberId;
                 }
             }
         }
@@ -946,13 +984,94 @@ export function createBrickExchangeServer({
                 401,
                 errorEnvelope('UNAUTHORIZED', 'Valid Bearer authentication token is required', null, HUB_TOOL)
             );
-            return { ok: false, viewerId: '' };
+            return { ok: false, viewerId: '', isWildcardAdmin: false };
+        }
+
+        if (mappedMemberId && requestedViewer && requestedViewer !== mappedMemberId) {
+            ctx.sendJson(
+                403,
+                errorEnvelope(
+                    'VIEWER_TOKEN_MISMATCH',
+                    'Authenticated Bearer token is bound to a different member identity',
+                    null,
+                    HUB_TOOL
+                )
+            );
+            return { ok: false, viewerId: '', isWildcardAdmin: false };
         }
 
         return {
             ok: true,
-            viewerId: mappedMemberId || headerViewer || queryViewer,
+            viewerId: mappedMemberId || requestedViewer,
+            isWildcardAdmin: matchedWildcardAdmin && !requestedViewer,
         };
+    }
+
+    function authorizeOrgMutation(ctx, auth, targetOrgIdRaw) {
+        if (auth.isWildcardAdmin) {
+            return true;
+        }
+        const targetOrgId = cleanIdentifier(targetOrgIdRaw);
+        if (authRequired || auth.viewerId) {
+            const actor =
+                auth.viewerId && typeof store.getMember === 'function'
+                    ? store.getMember(auth.viewerId)
+                    : null;
+            if (!actor || !targetOrgId || actor.orgId !== targetOrgId) {
+                ctx.sendJson(
+                    403,
+                    errorEnvelope(
+                        'CROSS_ORG_MUTATION_FORBIDDEN',
+                        'Authenticated member is not authorized to mutate another organization',
+                        { targetOrgId: targetOrgId || null },
+                        HUB_TOOL
+                    )
+                );
+                return false;
+            }
+        }
+        return true;
+    }
+
+    function guardHttpRepoEndpoint(ctx, body) {
+        if (
+            body?.invariantScript !== undefined &&
+            body?.invariantScript !== null &&
+            String(body.invariantScript).trim().length > 0 &&
+            allowHttpInvariantScripts !== true
+        ) {
+            ctx.sendJson(
+                403,
+                errorEnvelope(
+                    'HTTP_INVARIANT_SCRIPT_FORBIDDEN',
+                    'Inline invariantScript execution over HTTP is disabled by default; use invariantEntryFile or enable allowHttpInvariantScripts in trusted local harnesses',
+                    null,
+                    HUB_TOOL
+                )
+            );
+            return false;
+        }
+
+        if (resolvedWorkspaceRoot && typeof body?.repoDir === 'string' && body.repoDir.trim().length > 0) {
+            const candidateReal = resolveRealOrDeepestAncestorPath(body.repoDir.trim());
+            const insideAllowed =
+                candidateReal === resolvedWorkspaceRoot ||
+                candidateReal.startsWith(`${resolvedWorkspaceRoot}${path.sep}`);
+            if (!insideAllowed) {
+                ctx.sendJson(
+                    403,
+                    errorEnvelope(
+                        'PATH_OUTSIDE_WORKSPACE',
+                        'Requested repoDir resolves outside allowedWorkspaceRoot',
+                        null,
+                        HUB_TOOL
+                    )
+                );
+                return false;
+            }
+        }
+
+        return true;
     }
 
     const routes = {
@@ -984,6 +1103,7 @@ export function createBrickExchangeServer({
         'POST /api/orgs': (ctx) => {
             const auth = authenticateAndResolveViewer(ctx);
             if (!auth.ok) return;
+            if (!authorizeOrgMutation(ctx, auth, ctx.body?.id)) return;
             const res = store.upsertOrg(ctx.body || {});
             if (!res.ok) {
                 ctx.sendJson(400, res);
@@ -1003,6 +1123,7 @@ export function createBrickExchangeServer({
         'POST /api/members': (ctx) => {
             const auth = authenticateAndResolveViewer(ctx);
             if (!auth.ok) return;
+            if (!authorizeOrgMutation(ctx, auth, ctx.body?.orgId)) return;
             const res = store.upsertMember(ctx.body || {});
             if (!res.ok) {
                 ctx.sendJson(400, res);
@@ -1014,6 +1135,7 @@ export function createBrickExchangeServer({
         'POST /api/briefs': async (ctx) => {
             const auth = authenticateAndResolveViewer(ctx);
             if (!auth.ok) return;
+            if (!authorizeOrgMutation(ctx, auth, ctx.body?.orgId)) return;
             const res = await store.setWorkflowBrief(ctx.body || {});
             if (!res.ok) {
                 ctx.sendJson(400, res);
@@ -1108,11 +1230,29 @@ export function createBrickExchangeServer({
         'GET /api/grants': (ctx) => {
             const auth = authenticateAndResolveViewer(ctx);
             if (!auth.ok) return;
+            let grants = store.listGrants({
+                brickId: ctx.query.brickId || null,
+                recipientId: ctx.query.recipientId || null,
+            });
+            if (auth.viewerId && !auth.isWildcardAdmin) {
+                const viewer =
+                    typeof store.getMember === 'function' ? store.getMember(auth.viewerId) : null;
+                const viewerOrgId = viewer?.orgId || null;
+                grants = grants.filter((g) => {
+                    if (!g) return false;
+                    if (g.issuerId === auth.viewerId) return true;
+                    if (Array.isArray(g.recipients) && g.recipients.includes(auth.viewerId)) {
+                        return true;
+                    }
+                    if (viewerOrgId && typeof store.getMember === 'function') {
+                        const issuer = store.getMember(g.issuerId);
+                        if (issuer?.orgId === viewerOrgId) return true;
+                    }
+                    return false;
+                });
+            }
             return okEnvelope(HUB_TOOL, 'Listed grants', {
-                grants: store.listGrants({
-                    brickId: ctx.query.brickId || null,
-                    recipientId: ctx.query.recipientId || null,
-                }),
+                grants,
             });
         },
 
@@ -1147,11 +1287,34 @@ export function createBrickExchangeServer({
         'GET /api/adoptions': (ctx) => {
             const auth = authenticateAndResolveViewer(ctx);
             if (!auth.ok) return;
+            let adoptions = store.listAdoptions({
+                brickId: ctx.query.brickId || null,
+                orgId: ctx.query.orgId || null,
+            });
+            if (auth.viewerId && !auth.isWildcardAdmin) {
+                const viewer =
+                    typeof store.getMember === 'function' ? store.getMember(auth.viewerId) : null;
+                const viewerOrgId = viewer?.orgId || null;
+                adoptions = adoptions.filter((a) => {
+                    if (!a) return false;
+                    if (a.userId === auth.viewerId) return true;
+                    if (viewerOrgId && a.orgId === viewerOrgId) return true;
+                    if (viewerOrgId && a.brickOrgId === viewerOrgId) return true;
+                    if (viewerOrgId && typeof store.getVisibleBrick === 'function') {
+                        const vis = store.getVisibleBrick({
+                            viewerId: auth.viewerId,
+                            brickId: a.brickId,
+                            sourceHash: a.sourceHash || null,
+                        });
+                        if (vis?.ok && vis.data?.bundle?.orgId === viewerOrgId) {
+                            return true;
+                        }
+                    }
+                    return false;
+                });
+            }
             return okEnvelope(HUB_TOOL, 'Listed adoptions', {
-                adoptions: store.listAdoptions({
-                    brickId: ctx.query.brickId || null,
-                    orgId: ctx.query.orgId || null,
-                }),
+                adoptions,
             });
         },
 
@@ -1179,6 +1342,7 @@ export function createBrickExchangeServer({
             const auth = authenticateAndResolveViewer(ctx);
             if (!auth.ok) return;
             const body = ctx.body || {};
+            if (!guardHttpRepoEndpoint(ctx, body)) return;
             if (body.candidateEdits && typeof body.candidateEdits === 'object') {
                 const verifyRes = await verifyTwoHopBlastRadius(body);
                 if (!verifyRes.ok) {
@@ -1198,7 +1362,9 @@ export function createBrickExchangeServer({
         'POST /api/fanout/plan': (ctx) => {
             const auth = authenticateAndResolveViewer(ctx);
             if (!auth.ok) return;
-            const res = planAgentFanOut(ctx.body || {});
+            const body = ctx.body || {};
+            if (!guardHttpRepoEndpoint(ctx, body)) return;
+            const res = planAgentFanOut(body);
             if (!res.ok) {
                 ctx.sendJson(400, res);
                 return;
@@ -1314,7 +1480,7 @@ export function createBrickExchangeServer({
 }
 
 /**
- * 8 canonical MCP tools (`INV-STACK-03` 4-boolean annotated) for coding agent Brick Exchange workflows.
+ * 10 canonical MCP tools (`INV-STACK-03` 4-boolean annotated) for coding agent Brick Exchange workflows.
  */
 export const BRICK_EXCHANGE_MCP_TOOLS = Object.freeze([
     defineMcpTool({

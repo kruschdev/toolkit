@@ -668,6 +668,7 @@ export function createBrickExchangeStore({
             localChecksPassed: Number(row.local_checks_passed) === 1,
             hydraRequestId: row.hydra_request_id ? String(row.hydra_request_id) : null,
             adoptedAt: String(row.adopted_at),
+            ...(row.brick_org_id ? { brickOrgId: String(row.brick_org_id) } : {}),
         };
     }
 
@@ -2168,16 +2169,21 @@ export function createBrickExchangeStore({
         const clauses = [];
         const params = [];
         if (typeof brickId === 'string' && brickId.trim().length > 0) {
-            clauses.push('brick_id = ?');
+            clauses.push('a.brick_id = ?');
             params.push(brickId.trim());
         }
         if (typeof orgId === 'string' && orgId.trim().length > 0) {
-            clauses.push('org_id = ?');
+            clauses.push('a.org_id = ?');
             params.push(orgId.trim());
         }
         const whereSql = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
         const rows = sqliteHandle.query(
-            `SELECT * FROM adoptions ${whereSql} ORDER BY adopted_at DESC, id ASC`,
+            `SELECT a.*, sb.org_id AS brick_org_id
+             FROM adoptions a
+             LEFT JOIN sealed_bricks sb
+               ON sb.brick_id = a.brick_id AND sb.source_hash = a.source_hash
+             ${whereSql}
+             ORDER BY a.adopted_at DESC, a.id ASC`,
             params
         );
         return rows.map((r) => hydrateAdoptionRow(r)).filter(Boolean);

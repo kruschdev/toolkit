@@ -252,7 +252,7 @@ export interface BrickExchangeStore {
     listAdoptions: (options?: { brickId?: string | null; orgId?: string | null }) => Array<Record<string, unknown>>;
     getPortfolioStats: () => LegoEnvelope<Record<string, unknown>>;
     verifyLedger: () => LegoEnvelope<Record<string, unknown>>;
-    close: () => void;
+    close: () => LegoEnvelope<{ closed: boolean }>;
 }
 
 export declare function canonicalBrickHash(value: unknown): string;
@@ -384,8 +384,10 @@ export declare function createBrickExchangeServer(options: {
     store: BrickExchangeStore;
     serviceName?: string;
     version?: string;
-    authTokens?: Record<string, string> | Map<string, string> | string[] | null;
+    authTokens?: Record<string, string | boolean> | Map<string, string | boolean> | string[] | null;
     corsOrigins?: string[];
+    allowedWorkspaceRoot?: string | null;
+    allowHttpInvariantScripts?: boolean;
     logger?: Record<string, any> | null;
 }): Server;
 export declare const BRICK_EXCHANGE_MCP_TOOLS: McpToolDefinition[];
@@ -540,19 +542,22 @@ export declare const CROSS_STACK_BRICK_EQUIVALENTS: Readonly<Record<string, Read
 export declare const CANONICAL_SHARED_TYPES: readonly string[];
 
 export declare function resolveCrossStackCatalogEquivalents(
-    brickIdOrRuntime?: string
+    brickIdOrRuntime?: string | null
 ): LegoEnvelope<Record<string, any>>;
 export declare function isWebStandardPureSource(source: string): {
     pure: boolean;
     violations: string[];
 };
-export declare function parsePortReference(rawPort: string): {
+export declare function parsePortReference(rawPort: string | { id: string }): {
     id: string;
     namespace: string;
     bareName: string;
     shared: boolean;
 } | null;
-export declare function arePortsCompatible(producedPort: string, consumedPort: string): boolean;
+export declare function arePortsCompatible(
+    producedPort: string | { id: string },
+    consumedPort: string | { id: string }
+): boolean;
 export declare function normalizeBrickOntologyMetadata(
     rawOntology?: BrickOntologyMetadata | Record<string, unknown>,
     options?: { source?: string; blueprint?: Partial<BrickBlueprint> | Record<string, unknown> }
@@ -562,12 +567,16 @@ export declare function normalizeBrickOntologyMetadata(
 }>;
 export declare function checkOntologyCompatibility(options: {
     bundle: SealedBrickBundle | Record<string, any>;
+    ontology?: BrickOntologyMetadata | Record<string, unknown> | null;
     targetStack?: BrickStackSlug | string;
     targetChannel?: string | null;
     providedSecurityBricks?: string[];
     enforceChannelGuards?: boolean;
     upstreamProducedPorts?: string[];
+    consumedPorts?: string[] | null;
     sampleData?: unknown;
+    localSample?: unknown;
+    localSampleOrSchema?: unknown;
 }): LegoEnvelope<Record<string, any>>;
 export declare function surrogateOntologyVertexId(namespace: string, logicalId?: string): number;
 export declare function compileBrickOntologyGraph(options?: {
@@ -585,7 +594,7 @@ export declare function syncBrickOntologyToHydra(
     options?: {
         hydraOpenCypherClient?: Record<string, any> | null;
         hydraClient?: Record<string, any> | null;
-        graphId?: string;
+        graphId?: string | null;
     }
 ): Promise<LegoEnvelope<Record<string, any>>>;
 export declare function traverseBrickOntology(
@@ -598,6 +607,7 @@ export declare function traverseBrickOntology(
         asOf?: string | null;
         maxHops?: number;
         hydraOpenCypherClient?: Record<string, any> | null;
+        hydraClient?: Record<string, any> | null;
     }
 ): LegoEnvelope<Record<string, any>> | Promise<LegoEnvelope<Record<string, any>>>;
 export declare function applyFieldMapToSample(

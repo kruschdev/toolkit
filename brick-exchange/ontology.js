@@ -121,11 +121,11 @@ function hasForbiddenKeyRecursive(value, depth = 0, seen = new WeakSet()) {
     if (value === null || typeof value !== 'object') {
         return null;
     }
-    if (depth > 24) {
-        return null;
-    }
     if (seen.has(value)) {
         return null;
+    }
+    if (depth > 24) {
+        return '__MAX_DEPTH_EXCEEDED__';
     }
     seen.add(value);
     try {
@@ -1100,13 +1100,43 @@ function stripCommentsPreservingLiterals(source) {
     return out.join('');
 }
 
+function consumeMaskedTemplateBody(code, startIdx, out, templateBraceStack, currentBraceDepth) {
+    const len = code.length;
+    let i = startIdx;
+    while (i < len) {
+        const c = code[i];
+        if (c === '\\' && i + 1 < len) {
+            out.push(' ', ' ');
+            i += 2;
+            continue;
+        }
+        if (c === '`') {
+            out.push('`');
+            return i + 1;
+        }
+        if (c === '$' && code[i + 1] === '{') {
+            out.push('$', '{');
+            templateBraceStack.push(currentBraceDepth);
+            return i + 2;
+        }
+        out.push(c === '\n' || c === '\r' ? c : ' ');
+        i += 1;
+    }
+    return i;
+}
+
 function maskStringAndTemplateBodies(commentStrippedCode) {
     const len = commentStrippedCode.length;
     const out = [];
     let i = 0;
+    let canStartRegex = true;
+    let braceDepth = 0;
+    const templateBraceStack = [];
 
     while (i < len) {
         const ch = commentStrippedCode[i];
+        const next = i + 1 < len ? commentStrippedCode[i + 1] : '';
+
         if (ch === "'" || ch === '"') {
             const quote = ch;
             out.push(quote);
@@ -1123,14 +1153,50 @@ function maskStringAndTemplateBodies(commentStrippedCode) {
                     i += 1;
                     break;
                 }
-                out.push(c === '\n' ? '\n' : ' ');
+                out.push(c === '\n' || c === '\r' ? c : ' ');
                 i += 1;
             }
+            canStartRegex = false;
             continue;
         }
+
         if (ch === '`') {
             out.push('`');
             i += 1;
+            i = consumeMaskedTemplateBody(
+                commentStrippedCode,
+                i,
+                out,
+                templateBraceStack,
+                braceDepth
+            );
+            canStartRegex = templateBraceStack.length > 0;
+            continue;
+        }
+
+        if (
+            ch === '}' &&
+            templateBraceStack.length > 0 &&
+            braceDepth === templateBraceStack[templateBraceStack.length - 1]
+        ) {
+            templateBraceStack.pop();
+            out.push('}');
+            i += 1;
+            i = consumeMaskedTemplateBody(
+                commentStrippedCode,
+                i,
+                out,
+                templateBraceStack,
+                braceDepth
+            );
+            canStartRegex = templateBraceStack.length > 0;
+            continue;
+        }
+
+        if (ch === '/' && canStartRegex && next !== '/' && next !== '*') {
+            out.push('/');
+            i += 1;
+            let inCharClass = false;
             while (i < len) {
                 const c = commentStrippedCode[i];
                 if (c === '\\' && i + 1 < len) {
@@ -1138,29 +1204,85 @@ function maskStringAndTemplateBodies(commentStrippedCode) {
                     i += 2;
                     continue;
                 }
-                if (c === '`') {
-                    out.push('`');
+                if (c === '[') {
+                    inCharClass = true;
+                    out.push(' ');
+                    i += 1;
+                    continue;
+                }
+                if (c === ']') {
+                    inCharClass = false;
+                    out.push(' ');
+                    i += 1;
+                    continue;
+                }
+                if (c === '/' && !inCharClass) {
+                    out.push('/');
+                    i += 1;
+                    while (i < len && isIdentPart(commentStrippedCode.charCodeAt(i))) {
+                        out.push(commentStrippedCode[i]);
+                        i += 1;
+                    }
+                    break;
+                }
+                if (c === '\n' || c === '\r') {
+                    out.push(c);
                     i += 1;
                     break;
                 }
-                if (c === '$' && commentStrippedCode[i + 1] === '{') {
-                    out.push('$', '{');
-                    i += 2;
-                    let depth = 1;
-                    while (i < len && depth > 0) {
-                        const inner = commentStrippedCode[i];
-                        if (inner === '{') depth += 1;
-                        else if (inner === '}') depth -= 1;
-                        out.push(inner);
-                        i += 1;
-                    }
-                    continue;
-                }
-                out.push(c === '\n' ? '\n' : ' ');
+                out.push(' ');
                 i += 1;
             }
+            canStartRegex = false;
             continue;
         }
+
+        if (isIdentStart(ch.charCodeAt(0))) {
+            const start = i;
+            while (i < len && isIdentPart(commentStrippedCode.charCodeAt(i))) {
+                out.push(commentStrippedCode[i]);
+                i += 1;
+            }
+            const word = commentStrippedCode.slice(start, i);
+            canStartRegex = REGEX_PRECEDING_KEYWORDS.has(word);
+            continue;
+        }
+
+        if (ch >= '0' && ch <= '9') {
+            while (
+                i < len &&
+                (isIdentPart(commentStrippedCode.charCodeAt(i)) || commentStrippedCode[i] === '.')
+            ) {
+                out.push(commentStrippedCode[i]);
+                i += 1;
+            }
+            canStartRegex = false;
+            continue;
+        }
+
+        if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r' || ch === '\f' || ch === '\v') {
+            out.push(ch);
+            i += 1;
+            continue;
+        }
+
+        if (ch === '{') {
+            braceDepth += 1;
+            canStartRegex = true;
+        } else if (ch === '}') {
+            braceDepth = Math.max(0, braceDepth - 1);
+            canStartRegex = false;
+        } else if (ch === ')' || ch === ']') {
+            canStartRegex = false;
+        } else if ((ch === '+' && next === '+') || (ch === '-' && next === '-')) {
+            out.push(ch, next);
+            i += 2;
+            canStartRegex = false;
+            continue;
+        } else {
+            canStartRegex = true;
+        }
+
         out.push(ch);
         i += 1;
     }
@@ -1171,7 +1293,7 @@ function maskStringAndTemplateBodies(commentStrippedCode) {
 /**
  * Inspect JS/TS source code for Web-Standard WinterCG/Browser purity (`INV-LEGO-36`).
  * Rejects `node:*` specifiers, bare Node host modules (`fs`, `path`, `crypto`, `child_process`, etc.),
- * `process.env` / `process.binding` / `process.cwd`, and Node `Buffer`.
+ * non-literal dynamic `import(...)` / `require(...)`, `process` / `__dirname` / `__filename`, and Node `Buffer`.
  *
  * @param {string} source
  * @returns {{ pure: boolean, violations: string[] }}
@@ -1209,27 +1331,27 @@ export function isWebStandardPureSource(source) {
     };
 
     let match;
-    const staticImportRe = /\bimport\s+(?!type\b)[\s\S]*?\bfrom\s*(['"`])([^'"`]+)\1/g;
+    const staticImportRe = /\bimport\s+(?!type\b)[\s\S]*?\bfrom\s*(['"`])([^'"`$]+)\1/g;
     while ((match = staticImportRe.exec(commentStripped)) !== null) {
         inspectSpecifier(match[2], 'import');
     }
 
-    const sideEffectImportRe = /\bimport\s*(['"`])([^'"`]+)\1/g;
+    const sideEffectImportRe = /\bimport\s*(['"`])([^'"`$]+)\1/g;
     while ((match = sideEffectImportRe.exec(commentStripped)) !== null) {
         inspectSpecifier(match[2], 'import');
     }
 
-    const reExportRe = /\bexport\s+(?!type\b)(?:\*(?:\s+as\s+[A-Za-z_$][A-Za-z0-9_$]*)?|\{[\s\S]*?\})\s*from\s*(['"`])([^'"`]+)\1/g;
+    const reExportRe = /\bexport\s+(?!type\b)(?:\*(?:\s+as\s+[A-Za-z_$][A-Za-z0-9_$]*)?|\{[\s\S]*?\})\s*from\s*(['"`])([^'"`$]+)\1/g;
     while ((match = reExportRe.exec(commentStripped)) !== null) {
         inspectSpecifier(match[2], 're-export');
     }
 
-    const dynImportRe = /(?<!(?:\.\s*|\?\.\s*|function\s+))\bimport\s*\(\s*(['"`])([^'"`]+)\1\s*\)/g;
+    const dynImportRe = /(?<!(?:\.\s*|\?\.\s*|function\s+))\bimport\s*\(\s*(['"`])([^'"`$]+)\1\s*\)/g;
     while ((match = dynImportRe.exec(commentStripped)) !== null) {
         inspectSpecifier(match[2], 'dynamic import()');
     }
 
-    const requireRe = /(?<!(?:\.\s*|\?\.\s*|function\s+))\brequire\s*\(\s*(['"`])([^'"`]+)\1\s*\)/g;
+    const requireRe = /(?<!(?:\.\s*|\?\.\s*|function\s+))\brequire\s*\(\s*(['"`])([^'"`$]+)\1\s*\)/g;
     while ((match = requireRe.exec(commentStripped)) !== null) {
         inspectSpecifier(match[2], 'require()');
     }
@@ -1237,21 +1359,56 @@ export function isWebStandardPureSource(source) {
     const codeWithoutStringLiterals = maskStringAndTemplateBodies(commentStripped);
 
     if (
-        /\bprocess\s*\.\s*(?:env|binding|cwd|exit|dlopen|versions|argv|nextTick|chdir|kill|umask|stdin|stdout|stderr)\b/.test(
+        /(?<!(?:\.\s*|\?\.\s*|function\s+))\bimport\s*\(\s*(?!(?:['"][\s]*['"]|`[\s]*`)\s*\))/.test(
             codeWithoutStringLiterals
-        ) ||
-        /\bprocess\s*\[\s*['"`]/.test(commentStripped) ||
-        /\b(?:globalThis|global)\s*\.\s*process\b/.test(codeWithoutStringLiterals)
+        )
     ) {
-        pushViolation('Node host process.* access is incompatible with Web-Standard runtimes');
+        pushViolation('Non-literal dynamic import() is incompatible with Web-Standard purity verification');
     }
 
     if (
-        /(?<!(?:\.\s*|\?\.\s*|interface\s+|type\s+|class\s+|function\s+))\bBuffer\s*(?:\.|\()/.test(
+        /(?<!(?:\.\s*|\?\.\s*|function\s+))\brequire\s*\(\s*(?!(?:['"][\s]*['"]|`[\s]*`)\s*\))/.test(
+            codeWithoutStringLiterals
+        ) ||
+        /\bcreateRequire\s*\(/.test(codeWithoutStringLiterals)
+    ) {
+        pushViolation('Non-literal or CommonJS require() is incompatible with Web-Standard runtimes');
+    }
+
+    if (
+        /(?<!(?:\.\s*|\?\.\s*|function\s+|class\s+|const\s+|let\s+|var\s+|interface\s+|type\s+))\bprocess\b(?!\s*:)/.test(
+            codeWithoutStringLiterals
+        ) ||
+        /\b(?:globalThis|global|self|window)\s*(?:\?\.)?\s*(?:\.\s*process\b|\[\s*(['"`])\s*process\s*\1\s*\])/.test(
+            commentStripped
+        ) ||
+        /\b(?:const|let|var)\s*\{[^}]*\bprocess\b[^}]*\}\s*=\s*(?:globalThis|global|self|window)\b/.test(
+            codeWithoutStringLiterals
+        )
+    ) {
+        pushViolation('Node host process access is incompatible with Web-Standard runtimes');
+    }
+
+    if (
+        /(?<!(?:\.\s*|\?\.\s*|const\s+|let\s+|var\s+|function\s+))\b(?:__dirname|__filename)\b(?!\s*:)/.test(
+            codeWithoutStringLiterals
+        ) ||
+        /\bimport\s*\.\s*meta\s*\.\s*(?:dirname|filename)\b/.test(codeWithoutStringLiterals)
+    ) {
+        pushViolation('Node host __dirname/__filename access is incompatible with Web-Standard runtimes');
+    }
+
+    if (
+        /(?<!(?:\.\s*|\?\.\s*|interface\s+|type\s+|class\s+|function\s+|const\s+|let\s+|var\s+))\bBuffer\b(?!\s*:)/.test(
             codeWithoutStringLiterals
         ) ||
         /\bnew\s+Buffer\s*\(/.test(codeWithoutStringLiterals) ||
-        /\b(?:globalThis|global)\s*\.\s*Buffer\b/.test(codeWithoutStringLiterals)
+        /\b(?:globalThis|global|self|window)\s*(?:\?\.)?\s*(?:\.\s*Buffer\b|\[\s*(['"`])\s*Buffer\s*\1\s*\])/.test(
+            commentStripped
+        ) ||
+        /\b(?:const|let|var)\s*\{[^}]*\bBuffer\b[^}]*\}\s*=\s*(?:globalThis|global|self|window)\b/.test(
+            codeWithoutStringLiterals
+        )
     ) {
         pushViolation('Node Buffer API is incompatible with Web-Standard runtimes; use Uint8Array/TextEncoder');
     }
@@ -1358,6 +1515,12 @@ export function arePortsCompatible(producedPort, consumedPort) {
     }
     if (prod.shared && cons.shared && prod.namespace === 'canonical' && cons.namespace === 'canonical') {
         return prod.bareName === cons.bareName;
+    }
+    if (!prod.shared && (prod.namespace === 'unscoped' || cons.namespace === 'unscoped')) {
+        return false;
+    }
+    if (!cons.shared && (prod.namespace === 'unscoped' || cons.namespace === 'unscoped')) {
+        return false;
     }
     return prod.namespace === cons.namespace && prod.bareName === cons.bareName;
 }
@@ -1675,11 +1838,24 @@ function extractRawOntologyFromBundle(bundle, explicitOntology = null) {
     if (isPlainObject(explicitOntology)) {
         return explicitOntology;
     }
-    if (isPlainObject(bundle?.ontology)) {
-        return bundle.ontology;
+    if (isPlainObject(bundle?.lineage)) {
+        if (isPlainObject(bundle?.blueprint?.ontology)) {
+            return bundle.blueprint.ontology;
+        }
+        const isAttestedSealedBundle =
+            bundle?.format === 'krusch-sealed-brick/v1' ||
+            isPlainObject(bundle?.attestation) ||
+            typeof bundle?.lineage?.blueprintHash === 'string' ||
+            isPlainObject(bundle?.blueprint);
+        if (isAttestedSealedBundle) {
+            return {};
+        }
     }
     if (isPlainObject(bundle?.blueprint?.ontology)) {
         return bundle.blueprint.ontology;
+    }
+    if (isPlainObject(bundle?.ontology)) {
+        return bundle.ontology;
     }
     return {};
 }
@@ -2383,7 +2559,27 @@ export function compileBrickOntologyGraph(options = {}) {
         }
     }
 
-    // Resolve `:SUPERSEDES` lineage across brick versions
+    // Resolve `:SUPERSEDES` lineage across brick versions (same-org & cycle-free)
+    const supersedesOutMap = new Map();
+    const createsSupersedesCycle = (fromId, toId) => {
+        if (fromId === toId) return true;
+        const visited = new Set([toId]);
+        const queue = [toId];
+        while (queue.length > 0) {
+            const cur = queue.shift();
+            const nextSet = supersedesOutMap.get(cur);
+            if (!nextSet) continue;
+            for (const nxt of nextSet) {
+                if (nxt === fromId) return true;
+                if (!visited.has(nxt)) {
+                    visited.add(nxt);
+                    queue.push(nxt);
+                }
+            }
+        }
+        return false;
+    };
+
     for (const newerBrick of brickNodes) {
         if (!Array.isArray(newerBrick.supersedes) || newerBrick.supersedes.length === 0) {
             continue;
@@ -2392,9 +2588,24 @@ export function compileBrickOntologyGraph(options = {}) {
             const targetBrick = ref.includes('@')
                 ? byCompositeRef.get(ref)
                 : bySourceHash.get(ref);
-            if (!targetBrick || targetBrick.id === newerBrick.id) {
+            if (!targetBrick || newerBrick.id === targetBrick.id) {
                 continue;
             }
+            if (
+                newerBrick.orgId &&
+                targetBrick.orgId &&
+                newerBrick.orgId !== targetBrick.orgId
+            ) {
+                continue;
+            }
+            if (createsSupersedesCycle(newerBrick.id, targetBrick.id)) {
+                continue;
+            }
+            if (!supersedesOutMap.has(newerBrick.id)) {
+                supersedesOutMap.set(newerBrick.id, new Set());
+            }
+            supersedesOutMap.get(newerBrick.id).add(targetBrick.id);
+
             targetBrick.isCurrent = false;
             targetBrick.supersededBy = newerBrick.id;
             if (!targetBrick.retiredAt) {
@@ -3368,27 +3579,48 @@ export function invokeBoundBrick(brickFn, rawInput, extraBinding = {}) {
 `;
 }
 
-function toPythonLiteral(value, indentLevel = 0) {
+function toPythonLiteral(value, indentLevel = 0, seen = new WeakSet()) {
+    if (indentLevel > 24) {
+        throw new RangeError('Maximum nesting depth (24) exceeded in toPythonLiteral');
+    }
     if (value === null || value === undefined) return 'None';
     if (typeof value === 'boolean') return value ? 'True' : 'False';
     if (typeof value === 'number') return Number.isFinite(value) ? String(value) : 'None';
     if (typeof value === 'string') return JSON.stringify(value);
-    const pad = '    '.repeat(indentLevel);
-    const innerPad = '    '.repeat(indentLevel + 1);
-    if (Array.isArray(value)) {
-        if (value.length === 0) return '[]';
-        const items = value.map((v) => `${innerPad}${toPythonLiteral(v, indentLevel + 1)}`);
-        return `[\n${items.join(',\n')},\n${pad}]`;
+    if (typeof value === 'bigint' || typeof value === 'function' || typeof value === 'symbol') {
+        throw new TypeError(`Unsupported non-JSON ${typeof value} value in toPythonLiteral`);
     }
-    if (isPlainObject(value)) {
-        const keys = Object.keys(value).filter((k) => !FORBIDDEN_KEYS.has(k) && value[k] !== undefined);
-        if (keys.length === 0) return '{}';
-        const pairs = keys.map(
-            (k) => `${innerPad}${JSON.stringify(k)}: ${toPythonLiteral(value[k], indentLevel + 1)}`
-        );
-        return `{\n${pairs.join(',\n')},\n${pad}}`;
+    if (typeof value === 'object') {
+        if (seen.has(value)) {
+            throw new TypeError('Circular reference detected in toPythonLiteral');
+        }
+        seen.add(value);
+        try {
+            const pad = '    '.repeat(indentLevel);
+            const innerPad = '    '.repeat(indentLevel + 1);
+            if (Array.isArray(value)) {
+                if (value.length === 0) return '[]';
+                const items = value.map(
+                    (v) => `${innerPad}${toPythonLiteral(v, indentLevel + 1, seen)}`
+                );
+                return `[\n${items.join(',\n')},\n${pad}]`;
+            }
+            if (isPlainObject(value)) {
+                const keys = Object.keys(value).filter(
+                    (k) => !FORBIDDEN_KEYS.has(k) && value[k] !== undefined
+                );
+                if (keys.length === 0) return '{}';
+                const pairs = keys.map(
+                    (k) =>
+                        `${innerPad}${JSON.stringify(k)}: ${toPythonLiteral(value[k], indentLevel + 1, seen)}`
+                );
+                return `{\n${pairs.join(',\n')},\n${pad}}`;
+            }
+        } finally {
+            seen.delete(value);
+        }
     }
-    return JSON.stringify(String(value));
+    throw new TypeError('Unsupported non-plain object in toPythonLiteral');
 }
 
 function renderPythonFastApiAdapterSource({
@@ -3502,6 +3734,118 @@ def build_mcp_or_http_payload(
 `;
 }
 
+function validateJsonSerializableBinding(
+    value,
+    depth = 0,
+    seen = new WeakSet(),
+    pathStr = 'bindingOverrides'
+) {
+    if (value === null || value === undefined) {
+        return { ok: true };
+    }
+    const valType = typeof value;
+    if (valType === 'boolean' || valType === 'string') {
+        return { ok: true };
+    }
+    if (valType === 'number') {
+        if (!Number.isFinite(value)) {
+            return {
+                ok: false,
+                path: pathStr,
+                reason: `Non-finite number (${String(value)}) is not JSON-serializable at ${pathStr}`,
+            };
+        }
+        return { ok: true };
+    }
+    if (valType === 'bigint' || valType === 'function' || valType === 'symbol') {
+        return {
+            ok: false,
+            path: pathStr,
+            reason: `Non-JSON ${valType} value rejected at ${pathStr}`,
+        };
+    }
+    if (valType === 'object') {
+        if (seen.has(value)) {
+            return {
+                ok: false,
+                path: pathStr,
+                reason: `Circular reference rejected at ${pathStr}`,
+            };
+        }
+        if (depth > 24) {
+            return {
+                ok: false,
+                path: pathStr,
+                reason: `Maximum nesting depth (24) exceeded at ${pathStr}`,
+            };
+        }
+        if (!Array.isArray(value) && !isPlainObject(value)) {
+            return {
+                ok: false,
+                path: pathStr,
+                reason: `Non-plain object instance rejected at ${pathStr}`,
+            };
+        }
+        if (Object.getOwnPropertySymbols(value).length > 0) {
+            return {
+                ok: false,
+                path: pathStr,
+                reason: `Symbol-keyed properties rejected at ${pathStr}`,
+            };
+        }
+        seen.add(value);
+        try {
+            if (Array.isArray(value)) {
+                for (let i = 0; i < value.length; i += 1) {
+                    if (value[i] === undefined) {
+                        return {
+                            ok: false,
+                            path: `${pathStr}[${i}]`,
+                            reason: `Undefined array element rejected at ${pathStr}[${i}]`,
+                        };
+                    }
+                    const nested = validateJsonSerializableBinding(
+                        value[i],
+                        depth + 1,
+                        seen,
+                        `${pathStr}[${i}]`
+                    );
+                    if (!nested.ok) return nested;
+                }
+                return { ok: true };
+            }
+            const ownNames = Object.getOwnPropertyNames(value);
+            for (let i = 0; i < ownNames.length; i += 1) {
+                const key = ownNames[i];
+                if (FORBIDDEN_KEYS.has(key)) {
+                    return {
+                        ok: false,
+                        forbiddenKey: key,
+                        path: `${pathStr}.${key}`,
+                        reason: `Forbidden prototype key "${key}" rejected at ${pathStr}.${key}`,
+                    };
+                }
+                if (value[key] === undefined) continue;
+                const nested = validateJsonSerializableBinding(
+                    value[key],
+                    depth + 1,
+                    seen,
+                    `${pathStr}.${key}`
+                );
+                if (!nested.ok) return nested;
+            }
+            return { ok: true };
+        } finally {
+            seen.delete(value);
+        }
+    }
+    return {
+        ok: false,
+        path: pathStr,
+        reason: `Unsupported value rejected at ${pathStr}`,
+    };
+}
+
 function sanitizeBindingObject(rawObj) {
     const out = {};
     if (!isPlainObject(rawObj)) return out;
@@ -3563,6 +3907,39 @@ export async function synthesizeBrickBinding(options = {}) {
     const tool = 'brick-exchange.ontology.bind';
     if (!isPlainObject(options)) {
         return errorEnvelope('INVALID_BINDING_OPTIONS', 'Options must be a plain object', null, tool);
+    }
+
+    if (options.bindingOverrides !== undefined) {
+        if (!isPlainObject(options.bindingOverrides)) {
+            return errorEnvelope(
+                'INVALID_BINDING_OVERRIDES',
+                'bindingOverrides must be a plain JSON-serializable object',
+                null,
+                tool
+            );
+        }
+        const bindingValid = validateJsonSerializableBinding(
+            options.bindingOverrides,
+            0,
+            new WeakSet(),
+            'bindingOverrides'
+        );
+        if (!bindingValid.ok) {
+            if (bindingValid.forbiddenKey) {
+                return errorEnvelope(
+                    'ONTOLOGY_FORBIDDEN_KEY',
+                    bindingValid.reason,
+                    { key: bindingValid.forbiddenKey },
+                    tool
+                );
+            }
+            return errorEnvelope(
+                'INVALID_BINDING_OVERRIDES',
+                bindingValid.reason,
+                { path: bindingValid.path },
+                tool
+            );
+        }
     }
 
     const forbiddenOpt = hasForbiddenKeyRecursive(options);
@@ -3713,11 +4090,20 @@ export async function synthesizeBrickBinding(options = {}) {
                     }
 
                     if (isPlainObject(patch.binding)) {
-                        resolvedBinding = sanitizeBindingObject(
+                        const candidateMerged =
                             patch.replaceBinding === true
                                 ? patch.binding
-                                : { ...resolvedBinding, ...patch.binding }
+                                : { ...resolvedBinding, ...patch.binding };
+                        const patchCheck = validateJsonSerializableBinding(
+                            candidateMerged,
+                            0,
+                            new WeakSet(),
+                            'patch.binding'
                         );
+                        if (!patchCheck.ok) {
+                            throw new Error(patchCheck.reason);
+                        }
+                        resolvedBinding = sanitizeBindingObject(candidateMerged);
                     }
 
                     adaptedSample = applyFieldMapToSample(localSample, resolvedFieldMap, {

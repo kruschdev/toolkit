@@ -169,12 +169,15 @@ function parseCliArgs(argv = []) {
         expiresDays: undefined,
         viewer: '',
         query: '',
+        repo: '',
         repoRoot: '',
         stack: '',
         channel: '',
         ports: '',
         asOf: '',
-        sample: ''
+        sample: '',
+        authTokens: [],
+        corsOrigins: []
     };
 
     const stringFlagMap = {
@@ -192,6 +195,7 @@ function parseCliArgs(argv = []) {
         '--hash': 'hash',
         '--viewer': 'viewer',
         '--query': 'query',
+        '--repo': 'repo',
         '--repo-root': 'repoRoot',
         '--stack': 'stack',
         '--channel': 'channel',
@@ -237,6 +241,18 @@ function parseCliArgs(argv = []) {
             flags.expiresDays = Number(argv[++i]);
         } else if (token.startsWith('--expires-days=')) {
             flags.expiresDays = Number(token.slice('--expires-days='.length));
+        } else if (token === '--auth-token') {
+            const tok = String(argv[++i] ?? '').trim();
+            if (tok) flags.authTokens.push(tok);
+        } else if (token.startsWith('--auth-token=')) {
+            const tok = token.slice('--auth-token='.length).trim();
+            if (tok) flags.authTokens.push(tok);
+        } else if (token === '--cors-origin') {
+            const orig = String(argv[++i] ?? '').trim();
+            if (orig) flags.corsOrigins.push(orig);
+        } else if (token.startsWith('--cors-origin=')) {
+            const orig = token.slice('--cors-origin='.length).trim();
+            if (orig) flags.corsOrigins.push(orig);
         } else if (Object.hasOwn(stringFlagMap, token)) {
             flags[stringFlagMap[token]] = String(argv[++i] ?? '').trim();
         } else {
@@ -344,7 +360,7 @@ export async function runCli(argv = process.argv.slice(2), io = {}) {
 
     if (!command || command === 'help' || flags.help) {
         const helpLines = [
-            'krusch-lego — Sovereign Toolkit Brick & Archetype CLI',
+            'krusch-lego - Sovereign Toolkit Brick & Archetype CLI',
             '',
             'Usage:',
             '  krusch-lego list [--runtime <node|python|react|edge>] [--json]',
@@ -356,13 +372,16 @@ export async function runCli(argv = process.argv.slice(2), io = {}) {
             '  krusch-lego seal <specJsonPath> [--out <bundlePath>] [--key <privateKeyPemPath>] [--db <sqlitePath>] [--json]',
             '  krusch-lego verify <bundlePath> [--pub-key <publicKeyPemPath>] [--json]',
             '  krusch-lego try <bundlePath> --input <jsonOrFile> [--binding <jsonFile>] [--json]',
-            '  krusch-lego adopt <bundlePath> [targetRepoDir] [--binding <file>] [--grant <grantId>] [--by <memberId>] [--db <sqlitePath>] [--json]',
+            '  krusch-lego adopt <bundlePath> [targetRepoDir] [--binding <file>] [--stack <stackSlug>] [--sample <jsonFile>] [--grant <grantId>] [--by <memberId>] [--db <sqlitePath>] [--json]',
             '  krusch-lego suggest <brickId> --db <sqlitePath> --actor <memberId> [--repo-root <dir>] [--json]',
             '  krusch-lego share <brickId> --db <sqlitePath> --issuer <memberId> --to <csvRecipients> [--hash <sourceHash>] [--expires-days <n>] [--json]',
             '  krusch-lego revoke <grantId> --db <sqlitePath> --actor <memberId> [--json]',
             '  krusch-lego inbox --db <sqlitePath> --viewer <memberId> [--query <q>] [--json]',
-            '  krusch-lego hub [--db <sqlitePath>] [--port <port>] [--json]',
-            '  krusch-lego mcp [--db <sqlitePath>]'
+            '  krusch-lego hub [--db <sqlitePath>] [--port <port>] [--repo <dir>] [--auth-token <token>] [--cors-origin <origin>] [--json]',
+            '  krusch-lego mcp [--db <sqlitePath>]',
+            '  krusch-lego blast-radius <changedFileCsv> [repoDir] [--json]',
+            '  krusch-lego fanout <tasksJsonPath> [repoDir] [--json]',
+            '  krusch-lego ontology <inspect|check|compose|bind> [args] [--stack <stackSlug>] [--channel <channelId>] [--ports <csvPorts>] [--sample <jsonPath>] [--json]'
         ];
         const payload = okOut('Displayed krusch-lego usage', {
             commands: [
@@ -381,7 +400,10 @@ export async function runCli(argv = process.argv.slice(2), io = {}) {
                 'revoke',
                 'inbox',
                 'hub',
-                'mcp'
+                'mcp',
+                'blast-radius',
+                'fanout',
+                'ontology'
             ],
             runtimes: [...VALID_RUNTIMES]
         });
@@ -833,7 +855,7 @@ export async function runCli(argv = process.argv.slice(2), io = {}) {
         if (!bundlePathRaw) {
             const payload = errOut(
                 'MISSING_BUNDLE',
-                'Usage: krusch-lego adopt <bundlePath> [targetRepoDir] [--binding <file>] [--grant <grantId>] [--by <memberId>] [--db <sqlitePath>] [--json]'
+                'Usage: krusch-lego adopt <bundlePath> [targetRepoDir] [--binding <file>] [--stack <stackSlug>] [--sample <jsonFile>] [--grant <grantId>] [--by <memberId>] [--db <sqlitePath>] [--json]'
             );
             emitResponse(payload, flags.json, [], writeOut, writeErr);
             return { exitCode: 1, payload };
@@ -843,10 +865,24 @@ export async function runCli(argv = process.argv.slice(2), io = {}) {
             flags.binding && fs.existsSync(path.resolve(flags.binding))
                 ? fs.readFileSync(path.resolve(flags.binding), 'utf8')
                 : null;
+        let localSample = undefined;
+        if (flags.sample) {
+            try {
+                localSample = fs.existsSync(path.resolve(flags.sample))
+                    ? JSON.parse(fs.readFileSync(path.resolve(flags.sample), 'utf8'))
+                    : JSON.parse(flags.sample);
+            } catch (err) {
+                const payload = errOut('INVALID_SAMPLE_JSON', `Failed to parse --sample JSON: ${err.message}`);
+                emitResponse(payload, flags.json, [], writeOut, writeErr);
+                return { exitCode: 1, payload };
+            }
+        }
         const adoptRes = await adoptBrickIntoRepo({
             bundle,
             targetRepoDir: path.resolve(targetRepoDir),
             bindingSource,
+            targetStack: flags.stack || null,
+            ...(localSample !== undefined ? { localSample } : {}),
             grantId: flags.grant || null,
             adoptedBy: flags.by || 'cli-dev'
         });
@@ -1026,7 +1062,8 @@ export async function runCli(argv = process.argv.slice(2), io = {}) {
             const lines = [
                 res.summary,
                 ...res.data.bricks.map(
-                    (b) => `  - ${b.brickId}@${String(b.sourceHash || '').slice(0, 8)} (${b.orgId}) [${b.accessMode || 'authorized'}]`
+                    (b) =>
+                        `  - ${b.brickId}@${String(b.lineage?.sourceHash || b.sourceHash || '').slice(0, 8)} (${b.orgId}) [${b.access?.mode || b.accessMode || 'authorized'}]`
                 )
             ];
             emitResponse(payload, flags.json, lines, writeOut, writeErr);
@@ -1039,8 +1076,16 @@ export async function runCli(argv = process.argv.slice(2), io = {}) {
     if (command === 'hub') {
         const dbPath = flags.db ? path.resolve(flags.db) : ':memory:';
         const listenPort = Number.isInteger(flags.port) && flags.port >= 0 ? flags.port : 4318;
+        const allowedWorkspaceRoot = path.resolve(flags.repo || flags.repoRoot || process.cwd());
+        const corsOrigins = flags.corsOrigins.length > 0 ? flags.corsOrigins : [];
+        const authTokens = flags.authTokens.length > 0 ? flags.authTokens : null;
         const store = createBrickExchangeStore({ dbPath });
-        const server = createBrickExchangeServer({ store });
+        const server = createBrickExchangeServer({
+            store,
+            allowedWorkspaceRoot,
+            corsOrigins,
+            authTokens
+        });
         attachGracefulShutdown(server, { onShutdown: () => store.close() });
         await new Promise((resolve) => server.listen(listenPort, '127.0.0.1', resolve));
         const addr = server.address();

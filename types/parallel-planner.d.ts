@@ -68,6 +68,7 @@ export interface NodePermissionSandboxOptions {
     extraReadPaths?: readonly string[];
     allowWritePaths?: readonly string[];
     allowedEnv?: Readonly<Record<string, string>>;
+    allowNetwork?: boolean;
     timeoutMs?: number;
     tool?: string;
 }

@@ -911,7 +911,354 @@ test('8. Wave 2 Choke Points: Ed25519 ontology sealing, permission-gated store c
     assert.equal(fsMod.existsSync(pyAdapterPath), true);
 
     const cliOut = [];
-    const cliRes = await runCli(['ontology', 'inspect', '--json'], { writeOut: (s) => cliOut.push(s) });
+    const cliRes = await runCli(['ontology', 'inspect', '--json'], { stdout: (s) => cliOut.push(s) });
     assert.equal(cliRes.exitCode, 0);
     assert.equal(cliRes.payload.ok, true);
+});
+
+test('9. Security & Ontology Hardening Regressions (SEC-02, SEC-04, SEC-06, ARCH-01, CLI-01)', async (t) => {
+    const {
+        sealBrick: sealTopLevel,
+        sealVerifiedBrick,
+        verifyBrickBundle: verifyTopLevel,
+        runBrickVerificationGates,
+        generateBrickSigningKeyPair,
+        createBrickExchangeStore,
+        createBrickExchangeServer,
+    } = await import('./brick-exchange.js');
+    const { runNodePermissionSandbox } = await import('./parallel-planner.js');
+    const { runCli } = await import('./bin/krusch-lego.js');
+    const fsMod = await import('node:fs');
+    const osMod = await import('node:os');
+    const pathMod = await import('node:path');
+
+    // 1. SEC-02: sealVerifiedBrick({ ontology }) signs ontology inside blueprintHash & rejects unsigned/mutated bundle.ontology
+    const keyPair = generateBrickSigningKeyPair().data;
+    const baseSource = 'export function passthrough(x) { if (!x) throw new Error("empty"); return { ok: true, v: x.v }; }';
+    const baseBp = {
+        id: 'sec02-signed-ontology',
+        exportName: 'passthrough',
+        inputSchema: { type: 'object', properties: { v: { type: 'number' } }, required: ['v'] },
+        outputSchema: { type: 'object', properties: { ok: { type: 'boolean' }, v: { type: 'number' } }, required: ['ok', 'v'] },
+    };
+    const gateReport = await runBrickVerificationGates({
+        blueprint: baseBp,
+        source: baseSource,
+        positiveChecks: [{ name: 'ok', input: { v: 7 }, expectedOutput: { ok: true, v: 7 } }],
+        faultChecks: [{ name: 'null', input: null, expectThrow: true }],
+    });
+    assert.equal(gateReport.ok, true);
+
+    const directSealWithOnt = sealVerifiedBrick({
+        blueprint: baseBp,
+        source: baseSource,
+        verificationReport: gateReport.data,
+        authorId: 'alice',
+        orgId: 'org-alpha',
+        privateKeyPem: keyPair.privateKeyPem,
+        ontology: {
+            stacks: ['node-esm', 'cloudflare-edge'],
+            producesPorts: ['audit_record'],
+        },
+    });
+    assert.equal(directSealWithOnt.ok, true);
+    assert.deepEqual(
+        directSealWithOnt.data.bundle.blueprint.ontology,
+        directSealWithOnt.data.bundle.ontology
+    );
+    assert.equal(verifyTopLevel(directSealWithOnt.data.bundle).ok, true);
+
+    // Mutating top-level bundle.ontology while keeping signed blueprint.ontology intact -> TAMPERED_ONTOLOGY
+    const topMutatedBundle = {
+        ...directSealWithOnt.data.bundle,
+        ontology: {
+            ...directSealWithOnt.data.bundle.ontology,
+            producesPorts: ['ledger_event'],
+        },
+    };
+    const topMutatedVerify = verifyTopLevel(topMutatedBundle);
+    assert.equal(topMutatedVerify.ok, false);
+    assert.equal(topMutatedVerify.error.code, 'TAMPERED_ONTOLOGY');
+
+    // Attaching unsigned top-level bundle.ontology to a bundle sealed WITHOUT ontology -> TAMPERED_ONTOLOGY
+    const plainSeal = await buildSealedTelemetryBrick();
+    assert.equal(plainSeal.ontology, undefined);
+    const injectedUnsignedOntologyBundle = {
+        ...plainSeal,
+        ontology: {
+            stacks: ['node-esm'],
+            producesPorts: ['ledger_event'],
+        },
+    };
+    const injectedVerify = verifyTopLevel(injectedUnsignedOntologyBundle);
+    assert.equal(injectedVerify.ok, false);
+    assert.equal(injectedVerify.error.code, 'TAMPERED_ONTOLOGY');
+
+    // extractRawOntologyFromBundle ignores unsigned top-level bundle.ontology on sealed bundles
+    const compatShadowCheck = checkOntologyCompatibility({
+        bundle: topMutatedBundle,
+        targetStack: 'cloudflare-edge',
+    });
+    assert.equal(compatShadowCheck.ok, true);
+    assert.deepEqual(compatShadowCheck.data.ontology.producesPorts, ['audit_record']);
+
+    // 2. ARCH-01: Unscoped opaque port isolation ('channel_id' cannot bridge without explicit <ns>:<port>)
+    assert.equal(arePortsCompatible('channel_id', 'channel_id'), false);
+    assert.equal(arePortsCompatible('channel_id', 'slack:channel_id'), false);
+    assert.equal(arePortsCompatible('slack:channel_id', 'slack:channel_id'), true);
+
+    // 3. ARCH-01: Cross-org :SUPERSEDES block & cycle guard
+    const hAlpha = 'a'.repeat(64);
+    const hRival = 'b'.repeat(64);
+    const hCycle1 = 'c'.repeat(64);
+    const hCycle2 = 'd'.repeat(64);
+    const secGraph = compileBrickOntologyGraph({
+        bricks: [
+            {
+                brickId: 'alpha-ledger',
+                orgId: 'org-alpha',
+                source: 'export default (x) => ({ gross: x.amount, currency: "USD" });',
+                lineage: { sourceHash: hAlpha },
+                ontology: {
+                    producesPorts: ['channel_id'],
+                    validFrom: '2026-01-01',
+                },
+            },
+            {
+                brickId: 'rival-spoof',
+                orgId: 'org-rival',
+                source: 'export default (x) => ({ actor: "r", action: "x", resource: String(x) });',
+                lineage: { sourceHash: hRival },
+                ontology: {
+                    consumesPorts: ['channel_id'],
+                    producesPorts: ['audit_record'],
+                    supersedes: [`alpha-ledger@${hAlpha}`],
+                    validFrom: '2026-06-01',
+                },
+            },
+            {
+                brickId: 'cycle-a',
+                orgId: 'org-alpha',
+                source: 'export default (x) => x;',
+                lineage: { sourceHash: hCycle1 },
+                ontology: {
+                    supersedes: [`cycle-b@${hCycle2}`],
+                    validFrom: '2026-02-01',
+                },
+            },
+            {
+                brickId: 'cycle-b',
+                orgId: 'org-alpha',
+                source: 'export default (x) => x;',
+                lineage: { sourceHash: hCycle2 },
+                ontology: {
+                    supersedes: [`cycle-a@${hCycle1}`],
+                    validFrom: '2026-03-01',
+                },
+            },
+        ],
+    });
+    assert.equal(secGraph.ok, true);
+    const alphaNode = secGraph.data.nodes.find((n) => n.sourceHash === hAlpha);
+    assert.equal(alphaNode.isCurrent, true, 'Cross-org brick must never retire another org brick via SUPERSEDES');
+    assert.equal(alphaNode.supersededBy, null);
+    const supEdges = secGraph.data.edges.filter((e) => e.type === 'SUPERSEDES');
+    assert.equal(supEdges.length, 1, 'Mutual SUPERSEDES cycle must be broken cleanly');
+
+    const unscopedTrav = traverseBrickOntology(secGraph, {
+        requiredPorts: ['audit_record'],
+        maxHops: 2,
+    });
+    assert.equal(unscopedTrav.ok, true);
+    assert.equal(
+        unscopedTrav.data.compositions.length,
+        0,
+        'Unscoped channel_id port must not bridge across 2-hop compositions'
+    );
+
+    // 4. ARCH-01: BigInt / circular / max-depth bindingOverrides return clean INVALID_BINDING_OVERRIDES envelopes
+    const bigIntRes = await synthesizeBrickBinding({
+        bundle: plainSeal,
+        targetStack: 'node-esm',
+        bindingOverrides: { unsafeCounter: 42n },
+    });
+    assert.equal(bigIntRes.ok, false);
+    assert.equal(bigIntRes.error.code, 'INVALID_BINDING_OVERRIDES');
+
+    const cycBinding = { label: 'loop' };
+    cycBinding.self = cycBinding;
+    const cycRes = await synthesizeBrickBinding({
+        bundle: plainSeal,
+        targetStack: 'python-fastapi',
+        bindingOverrides: cycBinding,
+    });
+    assert.equal(cycRes.ok, false);
+    assert.equal(cycRes.error.code, 'INVALID_BINDING_OVERRIDES');
+
+    let deepPolluted = JSON.parse('{"__proto__":{"deep":true}}');
+    for (let d = 0; d < 28; d += 1) {
+        deepPolluted = { nested: deepPolluted };
+    }
+    const deepRes = normalizeBrickOntologyMetadata(deepPolluted);
+    assert.equal(deepRes.ok, false);
+    assert.equal(deepRes.error.code, 'ONTOLOGY_FORBIDDEN_KEY');
+
+    // 5. ARCH-01: Web-Standard purity lexer hardened against template string escapes, dynamic import/require, bracket globals & destructuring
+    assert.equal(
+        isWebStandardPureSource('export const ok = (n) => `note: ${"}" + String(n)}`;').pure,
+        true
+    );
+    for (const trickyHostSnippet of [
+        'export const leak = () => `${"}" + process.env.NODE_ENV}`;',
+        'export const dyn = async (m) => import(m);',
+        'export const req = (m) => require(m);',
+        'export const gBuf = () => globalThis["Buffer"].from("ab");',
+        'export const gProc = () => globalThis[\'process\'].cwd();',
+        'export const destr = () => { const { env } = process; return env; };',
+        'export const dir = () => __dirname;',
+        'export const file = () => __filename;',
+    ]) {
+        assert.equal(
+            isWebStandardPureSource(trickyHostSnippet).pure,
+            false,
+            `Expected Web-Standard purity rejection for: ${trickyHostSnippet}`
+        );
+    }
+
+    // 6. SEC-04 & SEC-06: Hub same-origin CORS default, RCE/workspace locks, tenant isolation, & sandbox network strip
+    const tmpRoot = fsMod.mkdtempSync(pathMod.join(osMod.tmpdir(), 'brick-sec04-'));
+    const outsideDir = fsMod.mkdtempSync(pathMod.join(osMod.tmpdir(), 'brick-outside-'));
+    t.after(() => {
+        fsMod.rmSync(tmpRoot, { recursive: true, force: true });
+        fsMod.rmSync(outsideDir, { recursive: true, force: true });
+    });
+
+    const netProbe = await runNodePermissionSandbox({
+        workspaceDir: tmpRoot,
+        script: '__emitResult({ hasFetch: typeof globalThis.fetch, hasWs: typeof globalThis.WebSocket });',
+        timeoutMs: 3000,
+    });
+    assert.equal(netProbe.ok, true);
+    assert.deepEqual(netProbe.data.result, { hasFetch: 'undefined', hasWs: 'undefined' });
+
+    const hubDbPath = pathMod.join(tmpRoot, 'hub-sec.db');
+    const store = createBrickExchangeStore({ dbPath: hubDbPath });
+    t.after(() => store.close());
+
+    store.upsertOrg({ id: 'org-alpha', name: 'Org Alpha', peers: ['org-beta'] });
+    store.upsertOrg({ id: 'org-beta', name: 'Org Beta', peers: ['org-alpha'] });
+    store.upsertOrg({ id: 'org-gamma', name: 'Org Gamma', peers: [] });
+    store.upsertMember({ id: 'alice', name: 'Alice', orgId: 'org-alpha', publisher: true, exporter: true, receiveMode: 'federated' });
+    store.upsertMember({ id: 'bob', name: 'Bob', orgId: 'org-beta', receiveMode: 'federated' });
+    store.upsertMember({ id: 'mallory', name: 'Mallory', orgId: 'org-gamma', publisher: true, exporter: true, receiveMode: 'federated' });
+
+    const pubCheck = store.publishSealedBrick(directSealWithOnt.data.bundle, { actorId: 'alice' });
+    assert.equal(pubCheck.ok, true);
+    const gRes = store.issueGrant({
+        issuerId: 'alice',
+        brickId: directSealWithOnt.data.bundle.brickId,
+        sourceHash: directSealWithOnt.data.bundle.lineage.sourceHash,
+        recipients: ['bob'],
+        expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+    });
+    assert.equal(gRes.ok, true);
+    const recCheck = await store.recordAdoption({
+        userId: 'bob',
+        brickId: directSealWithOnt.data.bundle.brickId,
+        sourceHash: directSealWithOnt.data.bundle.lineage.sourceHash,
+        grantId: gRes.data.grant.id,
+    });
+    assert.equal(recCheck.ok, true);
+
+    const server = createBrickExchangeServer({
+        store,
+        allowedWorkspaceRoot: tmpRoot,
+        authTokens: {
+            'tok-alice': 'alice',
+            'tok-bob': 'bob',
+            'tok-mallory': 'mallory',
+            'tok-admin': '*',
+        },
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    t.after(() => new Promise((resolve) => server.close(resolve)));
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+    // Same-origin default: foreign Origin does NOT receive Access-Control-Allow-Origin: *
+    const corsProbe = await fetch(`${baseUrl}/api/stats`, {
+        headers: { Authorization: 'Bearer tok-alice', Origin: 'https://evil.example' },
+    });
+    assert.equal(corsProbe.status, 200);
+    assert.equal(corsProbe.headers.get('access-control-allow-origin'), null);
+
+    // HTTP invariantScript forbidden by default (403) & outside workspaceDir forbidden (403)
+    const rceAttempt = await fetch(`${baseUrl}/api/blast-radius`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer tok-alice' },
+        body: JSON.stringify({
+            repoDir: tmpRoot,
+            candidateEdits: { 'a.js': 'export const x = 1;' },
+            invariantScript: '__emitResult({ pwn: true });',
+        }),
+    });
+    assert.equal(rceAttempt.status, 403);
+    assert.equal((await rceAttempt.json()).error.code, 'HTTP_INVARIANT_SCRIPT_FORBIDDEN');
+
+    const outsideAttempt = await fetch(`${baseUrl}/api/fanout/plan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer tok-alice' },
+        body: JSON.stringify({ repoDir: outsideDir, tasks: [] }),
+    });
+    assert.equal(outsideAttempt.status, 403);
+    assert.equal((await outsideAttempt.json()).error.code, 'PATH_OUTSIDE_WORKSPACE');
+
+    // Tenant isolation: mallory (org-c) sees 0 grants/adoptions for org-a<->org-b and cannot mutate org-a
+    const malloryGrants = await (
+        await fetch(`${baseUrl}/api/grants`, { headers: { Authorization: 'Bearer tok-mallory' } })
+    ).json();
+    assert.equal(malloryGrants.data.grants.length, 0);
+
+    const malloryAdoptions = await (
+        await fetch(`${baseUrl}/api/adoptions`, { headers: { Authorization: 'Bearer tok-mallory' } })
+    ).json();
+    assert.equal(malloryAdoptions.data.adoptions.length, 0);
+
+    const bobGrants = await (
+        await fetch(`${baseUrl}/api/grants`, { headers: { Authorization: 'Bearer tok-bob' } })
+    ).json();
+    assert.equal(bobGrants.data.grants.length, 1);
+
+    const aliceAdoptions = await (
+        await fetch(`${baseUrl}/api/adoptions`, { headers: { Authorization: 'Bearer tok-alice' } })
+    ).json();
+    assert.equal(aliceAdoptions.data.adoptions.length, 1);
+
+    for (const [route, payload] of [
+        ['/api/orgs', { id: 'org-alpha', name: 'Hijacked' }],
+        ['/api/members', { id: 'intruder', name: 'Intruder', orgId: 'org-alpha' }],
+        ['/api/briefs', { orgId: 'org-alpha', brief: 'Poisoned brief' }],
+    ]) {
+        const mutRes = await fetch(`${baseUrl}${route}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer tok-mallory' },
+            body: JSON.stringify(payload),
+        });
+        assert.equal(mutRes.status, 403, `Expected 403 for cross-org mutation on ${route}`);
+    }
+
+    // CLI-01: --help lists blast-radius, fanout, ontology; inbox prints lineage sourceHash & access mode
+    const helpRes = await runCli(['--help', '--json'], { stdout: () => {}, stderr: () => {} });
+    assert.equal(helpRes.exitCode, 0);
+    assert.ok(helpRes.payload.data.commands.includes('blast-radius'));
+    assert.ok(helpRes.payload.data.commands.includes('fanout'));
+    assert.ok(helpRes.payload.data.commands.includes('ontology'));
+
+    const inboxLines = [];
+    const inboxCli = await runCli(['inbox', '--db', hubDbPath, '--viewer', 'bob'], {
+        stdout: (line) => inboxLines.push(line),
+        stderr: () => {},
+    });
+    assert.equal(inboxCli.exitCode, 0);
+    const expectedPrefix = directSealWithOnt.data.bundle.lineage.sourceHash.slice(0, 8);
+    assert.ok(inboxLines.some((l) => l.includes(`@${expectedPrefix}`) && l.includes('[scoped-grant]')));
 });

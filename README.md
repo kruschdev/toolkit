@@ -3,25 +3,31 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-cyan.svg)](LICENSE)
 [![Node.js >= 22](https://img.shields.io/badge/node-%3E%3D22.0.0-brightgreen.svg)](https://nodejs.org)
 [![Python >= 3.11](https://img.shields.io/badge/python-%3E%3D3.11-blue.svg)](https://www.python.org)
-[![Bricks: 40 Runtime + 7 Blueprints](https://img.shields.io/badge/Lego%20Bricks-40%20Runtime%20%2B%207%20Blueprints-blueviolet.svg)](#2--core-infrastructure--application-lego-bricks-v181--full-dts-typescript-coverage)
+[![Bricks: 40 Runtime + 7 Blueprints](https://img.shields.io/badge/Lego%20Bricks-40%20Runtime%20%2B%207%20Blueprints-blueviolet.svg)](#2--core-infrastructure--application-lego-bricks-v181-full-dts-typescript-coverage)
 
 **The Unified Application Runtime Lego Suite (`@krusch/toolkit` v1.8.1 for Node.js / TypeScript / Cloudflare Workers + `krusch_toolkit` v1.6.0 for Python 3.11+).**
 
 `@krusch/toolkit` unifies zero-boilerplate HTTP/SSE/MCP servers, DNS-rebinding-safe SSRF guards, atomic `Idempotency-Key` locks, SHA-256 hash-chained compliance audit ledgers, deny-by-default RBAC & multi-tenant IDOR guards, HMAC-signed keyset cursors, Ed25519-sealed multi-engineer & multi-agent brick exchange with 2-hop AST blast-radius gates, YAML 1.2 & schema validators, `node:sqlite` FTS5/RRF & `pgvector` wrappers, SQLAlchemy WAL/async pools, air-gapped Streamlit shells, multi-tier LLM cascade routing, and research-backed agentic governance bricks under a deterministic `{ ok, tool, summary, data | error }` envelope contract (`INV-LEGO-01`).
 
-> 🔗 **Companion Coding Agent Control Plane**: Pair `@krusch/toolkit` (the *Application Runtime Plane* imported inside the services you build) with **[`krusch-stack`](https://github.com/kruschdev/krusch-stack)** (the *39-tool MCP Coding Agent Control Plane* for Claude Code, Cursor, Windsurf, and Antigravity). `krusch-stack` stamps starter templates backed by `@krusch/toolkit` and audits diffs against `INV-LEGO-01..35` so agents assemble apps from verified bricks rather than hand-rolling boilerplate.
+> 🔗 **Companion Coding Agent Control Plane**: Pair `@krusch/toolkit` (the *Application Runtime Plane* imported inside the services you build) with **[`krusch-stack`](https://github.com/kruschdev/krusch-stack)** (the *39-tool MCP Coding Agent Control Plane* for Claude Code, Cursor, Windsurf, and Antigravity). `krusch-stack` stamps starter templates backed by `@krusch/toolkit` and audits diffs against `INV-LEGO-01..36` so agents assemble apps from verified bricks rather than hand-rolling boilerplate.
 
 ---
 
 ## 🎬 Narrated Architecture Walkthroughs (`1080p`)
 
-### 1. *Validated Brick Exchange & DEADBOLT 2-Hop Agent Waves* (`01:15` · New in `v1.8.1`)
+### 1. *4-Axis Cross-Stack & Channel Ontology on HydraScope + Brick Exchange* (`01:39` · New in `v1.8.1`)
+
+[![Watch Ontological Brick Exchange + HydraScope + DEADBOLT Launch Video (01:39 · 1080p HD)](docs/assets/brick-exchange-ontology-launch-card.jpg)](https://krusch.dev/assets/video/brick-exchange-ontology-launch.mp4)
+
+> ▶️ **[Stream 1080p HD Ontology Launch Video (`01:39`, with audio)](https://krusch.dev/assets/video/brick-exchange-ontology-launch.mp4)** · **[Paper #30: Ontological Brick Exchange](https://krusch.dev/articles/ontological-brick-exchange-deadbolt-common-ground-hydrascope)** · **[Paper #29: Common Ground & DEADBOLT](https://krusch.dev/articles/mit-open-source-brick-exchange-common-ground-deadbolt)** · **[Local MP4 (`10.1 MiB`)](docs/assets/brick-exchange-ontology-launch.mp4)** · **[Closed Captions (`.srt`)](docs/assets/brick-exchange-ontology-launch.srt)**
+
+### 2. *Validated Brick Exchange & DEADBOLT 2-Hop Agent Waves* (`01:15`)
 
 [![Watch @krusch/toolkit/brick-exchange + DEADBOLT Launch Video (01:15 · 1080p HD)](docs/assets/brick-exchange-launch-card.jpg)](https://krusch.dev/assets/video/brick-exchange-launch.mp4)
 
-> ▶️ **[Stream 1080p HD Launch Video (`01:15`, with audio)](https://krusch.dev/assets/video/brick-exchange-launch.mp4)** · **[Architecture Paper on `krusch.dev`](https://krusch.dev/articles/mit-open-source-brick-exchange-common-ground-deadbolt)** · **[Local MP4 (`6.5 MiB`)](docs/assets/brick-exchange-launch.mp4)** · **[Closed Captions (`.srt`)](docs/assets/brick-exchange-launch.srt)**
+> ▶️ **[Stream 1080p HD Launch Video (`01:15`, with audio)](https://krusch.dev/assets/video/brick-exchange-launch.mp4)** · **[Paper #29 on `krusch.dev`](https://krusch.dev/articles/mit-open-source-brick-exchange-common-ground-deadbolt)** · **[Local MP4 (`6.5 MiB`)](docs/assets/brick-exchange-launch.mp4)** · **[Closed Captions (`.srt`)](docs/assets/brick-exchange-launch.srt)**
 
-### 2. *The Golden Bricks* Full Suite Tour (`02:26`)
+### 3. *The Golden Bricks* Full Suite Tour (`02:26`)
 
 [![Watch @krusch/toolkit: The Golden Bricks Narrated Walkthrough (02:26 · 1080p HD)](docs/assets/krusch-toolkit-video-card.jpg)](https://krusch.dev/assets/video/krusch-toolkit-golden-bricks.mp4)
 
@@ -41,7 +47,7 @@ npm test
 npm run verify:zero-leaks
 ```
 
-### Python 3.11+ (`krusch_toolkit` v1.6.0 — inside `./python`)
+### Python 3.11+ (`krusch_toolkit` v1.6.0, inside `./python`)
 
 ```bash
 pip install -e "./python[dev,fastapi,streamlit]"
@@ -73,7 +79,7 @@ pytest python/tests -q
 
 ---
 
-### 2. 🧰 Core Infrastructure & Application Lego Bricks (`v1.8.1` — Full `.d.ts` TypeScript Coverage)
+### 2. 🧰 Core Infrastructure & Application Lego Bricks (`v1.8.1`, Full `.d.ts` TypeScript Coverage)
 
 Every subpath export ships strict `.d.ts` declarations (`./types/*.d.ts`) compatible with `moduleResolution: "NodeNext"` and zero-build Node 22 TypeScript (`node --experimental-strip-types`).
 
@@ -89,7 +95,7 @@ Every subpath export ships strict `.d.ts` declarations (`./types/*.d.ts`) compat
 | `@krusch/toolkit/audit-log` | `createAuditLog`, `verifyAuditChain`, `computeAuditEntryHash`, `canonicalizeAuditPayload`, `GENESIS_AUDIT_HASH` | Tamper-evident SHA-256 / HMAC hash-chained compliance ledger with canonical JSON serialization and SQLite `BEFORE UPDATE/DELETE` immutability triggers (`INV-LEGO-32`). |
 | `@krusch/toolkit/rbac` | `createRbacPolicy`, `evaluateAccess`, `assertTenantOwnership`, `createRbacGuard`, `matchPermissionPattern` | Zero-`node:*` deny-by-default role inheritance & scoped permission evaluator with explicit-deny precedence and OWASP A01 multi-tenant IDOR guards (`INV-LEGO-33`). |
 | `@krusch/toolkit/pagination` | `clampPageLimit`, `encodeCursor`, `decodeCursor`, `buildKeysetPage`, `paginateItems` | Constant-time HMAC-SHA256 tamper-signed base64url keyset cursor encoder/decoder with scope/TTL binding and bounded page-limit clamps (`INV-LEGO-34`). |
-| `@krusch/toolkit/brick-exchange` | `sealBrick`, `verifyBrickBundle`, `runBrickRepairLoop`, `createBrickExchangeStore`, `tryBrickLocally`, `adoptBrickIntoRepo`, `auditRepoBrickLocks`, `analyzeBrickBlastRadius`, `planAgentFanOut`, `verifyTwoHopBlastRadius`, `createBrickExchangeServer`, `createBrickExchangeMcpServer` | Cryptographically attested multi-engineer & multi-agent Validated Brick Exchange: Node 22 `--permission` sandbox + mandatory fault challenges, Ed25519 seals, scoped grants, local `binding` re-verification, `.brick-lock.json` drift checks, and Deadbolt 2-hop AST blast-radius & fan-out wave planning (`INV-LEGO-35`). |
+| `@krusch/toolkit/brick-exchange` | `sealBrick`, `verifyBrickBundle`, `runBrickRepairLoop`, `createBrickExchangeStore`, `tryBrickLocally`, `adoptBrickIntoRepo`, `auditRepoBrickLocks`, `analyzeBrickBlastRadius`, `planAgentFanOut`, `verifyTwoHopBlastRadius`, `checkOntologyCompatibility`, `compileBrickOntologyGraph`, `traverseBrickOntology`, `synthesizeBrickBinding`, `createBrickExchangeServer`, `createBrickExchangeMcpServer` | Cryptographically attested multi-engineer & multi-agent Validated Brick Exchange: Node 22 `--permission` sandbox + mandatory fault challenges, Ed25519 seals, scoped grants, local `binding` synthesis & re-verification, `.brick-lock.json` drift checks, 4-axis cross-stack HydraScope ontology, and Deadbolt 2-hop AST blast-radius & fan-out wave planning (`INV-LEGO-35..36`). |
 | `@krusch/toolkit/schema` | `s`, `toJsonSchema`, `validateSchema`, `validatePayload`, `createSchemaMiddleware` | Zero-`node:*` composable schema builder, Zod/JSON-Schema adapter, MCP `inputSchema` compiler, and prototype-safe validation middleware (`INV-LEGO-17`). |
 | `@krusch/toolkit/yaml` | `DEFAULT_YAML_LIMITS`, `parseSafeYaml`, `stringifySafeYaml`, `validateYamlConfig`, `loadSafeYamlPack` | Zero-dependency, zero-`node:*` isomorphic YAML 1.2 Core parser/serializer with alias-bomb & tag guards, schema validation, and SHA-256 pack loading (`INV-LEGO-23`). |
 | `@krusch/toolkit/upload` | `sanitizeUploadFilename`, `sniffMimeMagic`, `verifyUploadMime`, `parseBoundedMultipart` | Stream-draining $O(N)$ `multipart/form-data` parser with pre-buffer byte ceilings, path-traversal filename sanitizer, and magic-byte MIME guard (`INV-LEGO-18`). |
@@ -118,7 +124,7 @@ Every subpath export ships strict `.d.ts` declarations (`./types/*.d.ts`) compat
 
 ---
 
-### 3. 🐍 Python Lego Suite (`krusch_toolkit` v1.6.0 — `./python`)
+### 3. 🐍 Python Lego Suite (`krusch_toolkit` v1.6.0, `./python`)
 
 All Python Lego bricks import cleanly in bare Python 3.11+ stdlib (lazy-loading optional `fastapi`, `httpx`, `streamlit`, `sqlalchemy`, or `pyyaml` only when invoked).
 
@@ -185,7 +191,7 @@ node ./bin/krusch-lego.js scout ./projects --portable --json
 
 ## 🤝 Multi-Engineer & Multi-Agent Validated Brick Exchange (`@krusch/toolkit/brick-exchange`)
 
-> 🎬 **[Watch the 01:15 Launch Video (`1080p` HD)](https://krusch.dev/assets/video/brick-exchange-launch.mp4)** · **[Read Paper #29: Fusing Common Ground & DEADBOLT Under MIT](https://krusch.dev/articles/mit-open-source-brick-exchange-common-ground-deadbolt)**
+> 🎬 **[Watch the 01:39 Ontology Launch Video (`1080p` HD)](https://krusch.dev/assets/video/brick-exchange-ontology-launch.mp4)** · **[Read Paper #30: Ontological Brick Exchange on HydraScope](https://krusch.dev/articles/ontological-brick-exchange-deadbolt-common-ground-hydrascope)** · **[Read Paper #29: Fusing Common Ground & DEADBOLT Under MIT](https://krusch.dev/articles/mit-open-source-brick-exchange-common-ground-deadbolt)**
 
 Engineering teams and parallel coding-agent swarms hit three recurring failure modes when moving fast:
 1. **Unverified Cross-Team Copy-Paste**: Teams rebuild or copy subtle parsers, fee allocators, and webhook verifiers without proving fault-handling parity on their own data.
@@ -283,7 +289,7 @@ if (!result.resilient) {
 # 1. Run deterministic Zero-Leak security & sanitization gate
 npm run verify:zero-leaks
 
-# 2. Run all Node.js / TypeScript unit & integration suites
+# 2. Run all Node.js / TypeScript unit & integration suites (179/179 passing)
 npm test
 
 # 3. Run all Python unit & integration suites
@@ -295,3 +301,7 @@ pytest python/tests -q
 ## 📜 License
 
 [MIT](LICENSE) © `kruschdev`
+
+### Third-Party Open-Source Attribution
+
+Multi-organization permission evaluation, mutual peer allowlisting, sender muting, exporter revocation enforcement, and scoped non-reshareable federated grant lineage concepts in `@krusch/toolkit/brick-exchange` are adapted from [`0xANUSHKA/common-ground-8090`](https://github.com/0xANUSHKA/common-ground-8090) (`MIT License`, Copyright (c) 2026 Anushka Jogalekar and Common Ground contributors).

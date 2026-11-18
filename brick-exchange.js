@@ -13,7 +13,7 @@
  * - Ed25519 lineage signatures + Tiered RBAC (`team` commons + Common Ground scoped cross-org `Grant`s)
  * - SQLite WAL + hash-chained `audit-log` store, explainable brief/boilerplate matcher, & optional HydraDB v2 boost
  * - Vendored immutable bricks (`bricks/<id>/`) + editable local `binding` + `.brick-lock.json` drift gate
- * - Built-in HTTP Hub + Reuse & Grants Web Console + 8-tool MCP server (`hub-and-mcp.js`)
+ * - Built-in HTTP Hub + Reuse & Grants Web Console + 10-tool MCP server (`hub-and-mcp.js`)
  */
 
 import { okEnvelope, errorEnvelope } from './http.js';

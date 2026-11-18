@@ -362,7 +362,15 @@ export async function runNodePermissionSandbox(params = {}) {
     const marker = `${SANDBOX_JSON_MARKER_PREFIX}${crypto.randomBytes(12).toString('hex')}:`;
 
     if (hasInlineScript) {
+        const networkLockLines =
+            opts.allowNetwork === true
+                ? []
+                : [
+                      'try { delete globalThis.fetch; } catch {}',
+                      'try { delete globalThis.WebSocket; } catch {}',
+                  ];
         const wrappedScript = [
+            ...networkLockLines,
             'const __rawStdoutWrite = process.stdout.write.bind(process.stdout);',
             `const __MARKER = ${JSON.stringify(marker)};`,
             'globalThis.__emitResult = (payload) => {',

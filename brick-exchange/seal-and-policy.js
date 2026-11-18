@@ -18,6 +18,7 @@ import { okEnvelope, errorEnvelope } from '../http.js';
 import { canonicalizeAuditPayload } from '../audit-log.js';
 import { createRbacPolicy, evaluateAccess } from '../rbac.js';
 import { toJsonSchema } from '../schema.js';
+import { normalizeBrickOntologyMetadata } from './ontology.js';
 
 const SEAL_DOMAIN_PREFIX = 'krusch-brick-seal-v1:';
 const SEAL_ATTESTATION_DOMAIN = 'krusch-brick-seal-v1';
@@ -313,6 +314,7 @@ export function sealVerifiedBrick({
     publicKeyPem = '',
     requirementId = null,
     provenance = 'agent-verified',
+    ontology = undefined,
     createdAt = new Date().toISOString(),
 } = {}) {
     const tool = 'brick-exchange.seal';
@@ -540,6 +542,49 @@ export function sealVerifiedBrick({
     }
 
     const normalizedBlueprint = normalizeBlueprintForSeal(blueprint);
+    if (
+        (ontology !== undefined && ontology !== null) ||
+        (normalizedBlueprint.ontology !== undefined && normalizedBlueprint.ontology !== null)
+    ) {
+        if (ontology !== undefined && ontology !== null && !isPlainObject(ontology)) {
+            return errorEnvelope(
+                'INVALID_ONTOLOGY_METADATA',
+                'ontology must be a plain object when provided',
+                { field: 'ontology' },
+                tool
+            );
+        }
+        if (
+            normalizedBlueprint.ontology !== undefined &&
+            normalizedBlueprint.ontology !== null &&
+            !isPlainObject(normalizedBlueprint.ontology)
+        ) {
+            return errorEnvelope(
+                'INVALID_ONTOLOGY_METADATA',
+                'blueprint.ontology must be a plain object when provided',
+                { field: 'blueprint.ontology' },
+                tool
+            );
+        }
+        const mergedOntologyInput = {
+            ...(isPlainObject(normalizedBlueprint.ontology) ? normalizedBlueprint.ontology : {}),
+            ...(isPlainObject(ontology) ? ontology : {}),
+        };
+        const ontNormRes = normalizeBrickOntologyMetadata(mergedOntologyInput, {
+            source,
+            blueprint: normalizedBlueprint,
+        });
+        if (!ontNormRes.ok) {
+            return errorEnvelope(
+                ontNormRes.error.code,
+                ontNormRes.error.message,
+                ontNormRes.error.details ?? null,
+                tool
+            );
+        }
+        normalizedBlueprint.ontology = ontNormRes.data.ontology;
+    }
+
     const blueprintCanonCheck = canonicalizeAuditPayload(normalizedBlueprint, { tool });
     if (!blueprintCanonCheck.ok) {
         return errorEnvelope(
@@ -776,6 +821,27 @@ export function verifyBrickBundle(bundle, { trustedPublicKeyPem = null } = {}) {
             { field: 'blueprintHash' },
             tool
         );
+    }
+
+    if (Object.hasOwn(bundle, 'ontology') && bundle.ontology !== undefined) {
+        if (!isPlainObject(bundle.ontology) || !isPlainObject(bundle.blueprint.ontology)) {
+            return errorEnvelope(
+                'TAMPERED_ONTOLOGY',
+                'Unsigned top-level bundle.ontology is not attested by Ed25519-sealed blueprint.ontology',
+                { field: 'ontology' },
+                tool
+            );
+        }
+        const actualTopOntologyHash = computeCanonicalHash(bundle.ontology);
+        const signedBlueprintOntologyHash = computeCanonicalHash(bundle.blueprint.ontology);
+        if (!constantTimeHexEqual(actualTopOntologyHash, signedBlueprintOntologyHash)) {
+            return errorEnvelope(
+                'TAMPERED_ONTOLOGY',
+                'Top-level bundle.ontology does not match Ed25519-sealed blueprint.ontology',
+                { field: 'ontology' },
+                tool
+            );
+        }
     }
 
     const actualContractHash = computeCanonicalHash(extractContractShape(bundle.blueprint));
