@@ -1,7 +1,7 @@
 # `@krusch/toolkit` & `krusch_toolkit` Lego System — Specification
 
-> **Status**: `FROZEN` (`2026-10-31T16:10:00-07:00`)
-> **Packages**: `@krusch/toolkit` (`v1.7.0`) & `krusch-toolkit` (`python/` v1.6.0)
+> **Status**: `FROZEN` (`2026-11-18`)
+> **Packages**: `@krusch/toolkit` (`v1.8.1`, `40` bricks, `INV-LEGO-01..36`) & `krusch-toolkit` (`python/` v1.6.0)
 > **Enforcement**: `krusch-context-mcp` (`INV-LEGO-01`), `krusch-frontend-mcp`, `krusch-stack`, `scripts/verify-zero-leaks.js` (`INV-LEGO-26`)
 
 ---

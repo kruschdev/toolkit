@@ -26,7 +26,7 @@ Never hand-roll HTTP/Express boilerplate, SSE headers, MCP stdio servers, raw `p
     - import { createAuditLog, verifyAuditChain, computeAuditEntryHash } from '@krusch/toolkit/audit-log'
     - import { createRbacPolicy, evaluateAccess, assertTenantOwnership, createRbacGuard } from '@krusch/toolkit/rbac'
     - import { clampPageLimit, encodeCursor, decodeCursor, buildKeysetPage, paginateItems } from '@krusch/toolkit/pagination'
-    - import { sealBrick, verifyBrickBundle, tryBrickLocally, adoptBrickIntoRepo, analyzeBrickBlastRadius, planAgentFanOut, verifyTwoHopBlastRadius } from '@krusch/toolkit/brick-exchange'
+    - import { sealBrick, verifyBrickBundle, tryBrickLocally, adoptBrickIntoRepo, analyzeBrickBlastRadius, planAgentFanOut, verifyTwoHopBlastRadius, checkOntologyCompatibility, compileBrickOntologyGraph, traverseBrickOntology, synthesizeBrickBinding } from '@krusch/toolkit/brick-exchange'
     - import { s, toJsonSchema, validateSchema, createSchemaMiddleware } from '@krusch/toolkit/schema'
     - import { parseSafeYaml, stringifySafeYaml, validateYamlConfig, loadSafeYamlPack } from '@krusch/toolkit/yaml'
     - import { parseBoundedMultipart, verifyUploadMime, sanitizeUploadFilename } from '@krusch/toolkit/upload'

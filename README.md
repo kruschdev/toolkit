@@ -300,7 +300,7 @@ npm run verify:zero-leaks
 # 2. Run all Node.js / TypeScript unit & integration suites (179/179 passing)
 npm test
 
-# 3. Run all Python unit & integration suites
+# 3. Run all Python unit & integration suites (201/201 passing)
 pytest python/tests -q
 ```
 
