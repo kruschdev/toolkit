@@ -36,7 +36,8 @@ test('INV-LEGO-26: scanTextForLeaks allows RFC subnet CIDR masks, loopback, RFC 
         'const local = "http://127.0.0.1:11434";',
         'const rfcTest = ["10.1.2.3", "172.16.1.2", "100.64.1.2", "198.51.100.10"];',
         'const author = "kruschdev <kruschdev@users.noreply.github.com>";',
-        'const repo = "https://github.com/kruschdev/toolkit";'
+        'const repo = "https://github.com/kruschdev/toolkit";',
+        'const rawInstall = "https://raw.githubusercontent.com/kruschdev/toolkit/main/INSTALL.md";'
     ].join('\n');
 
     const findings = scanTextForLeaks(safeSample, 'security.js', { strictRelease: true });

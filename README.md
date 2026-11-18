@@ -37,6 +37,14 @@
 
 ## ⚡ Quick Start
 
+### Agent-Assisted Setup
+
+Ask your coding agent (Claude Code, Codex, Cursor, Windsurf, or Antigravity):
+
+```text
+Read https://raw.githubusercontent.com/kruschdev/toolkit/main/INSTALL.md and set up toolkit on this machine.
+```
+
 ### Node.js / TypeScript (`@krusch/toolkit` v1.8.1)
 
 ```bash
