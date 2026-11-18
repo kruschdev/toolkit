@@ -297,6 +297,10 @@
         "./brick-exchange": {
             "types": "./types/brick-exchange.d.ts",
             "default": "./brick-exchange.js"
+        },
+        "./git-alignment": {
+            "types": "./types/git-alignment.d.ts",
+            "default": "./git-alignment.js"
         }
     },
     "scripts": {

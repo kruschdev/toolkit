@@ -347,20 +347,31 @@ export type {
 export {
     HARNESS_SUBSYSTEMS,
     HARDLINE_POLICY_RULES,
-    DEFAULT_COCHANGE_RULES,
     deobfuscateShellCommand,
     validatePolicyRuleExamples,
     createFrozenPolicyFloor,
     delimitUntrustedContent,
     evaluateTruncationPoisoningGuard,
     evaluateVerifyOnStopGuard,
+    normalizePromptCachePrefix,
+    createDeferredToolBridge
+} from './harness-engineering.js';
+
+// Zero-LLM Git Diff, Co-Change Companion Gate & Causal Commit Rationale Primitives
+export {
+    DEFAULT_COCHANGE_RULES,
+    normalizeDiffRelativePath,
     extractDiffTouchedFiles,
     parseDiffOldHunks,
     compileSafeCoChangeGlob,
     evaluateCoChangeRules,
-    normalizePromptCachePrefix,
-    createDeferredToolBridge
-} from './harness-engineering.js';
+    extractCommitCausalRationale
+} from './git-alignment.js';
+export type {
+    CoChangeRule,
+    CoChangeViolation,
+    CompiledSafeGlob
+} from './git-alignment.js';
 
 // Source-Preserving Episodic Retrieval & Append-Only Memory Primitives
 export {
