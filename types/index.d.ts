@@ -1076,7 +1076,25 @@ export {
     verifyTwoHopBlastRadius,
     sealBrick,
     runBrickRepairLoop,
-    stageScoutCandidateSpecs
+    stageScoutCandidateSpecs,
+    ONTOLOGY_STACKS,
+    ONTOLOGY_DATA_PORTS,
+    ONTOLOGY_CHANNELS,
+    ONTOLOGY_MOE_PROFILES,
+    CROSS_STACK_BRICK_EQUIVALENTS,
+    CANONICAL_SHARED_TYPES,
+    resolveCrossStackCatalogEquivalents,
+    isWebStandardPureSource,
+    parsePortReference,
+    arePortsCompatible,
+    normalizeBrickOntologyMetadata,
+    checkOntologyCompatibility,
+    surrogateOntologyVertexId,
+    compileBrickOntologyGraph,
+    syncBrickOntologyToHydra,
+    traverseBrickOntology,
+    applyFieldMapToSample,
+    synthesizeBrickBinding
 } from './brick-exchange.js';
 export type {
     BrickSafetyFinding,
@@ -1096,7 +1114,10 @@ export type {
     BrickMember,
     BrickGrant,
     BrickRecipientSuggestion,
-    BrickExchangeStore
+    BrickExchangeStore,
+    BrickStackSlug,
+    BrickTimeSeriesContract,
+    BrickOntologyMetadata
 } from './brick-exchange.js';
 
 

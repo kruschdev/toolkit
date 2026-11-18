@@ -36,7 +36,15 @@ import {
     createBrickExchangeServer,
     createBrickExchangeMcpServer,
     analyzeBrickBlastRadius,
-    planAgentFanOut
+    planAgentFanOut,
+    ONTOLOGY_STACKS,
+    ONTOLOGY_DATA_PORTS,
+    ONTOLOGY_CHANNELS,
+    ONTOLOGY_MOE_PROFILES,
+    CROSS_STACK_BRICK_EQUIVALENTS,
+    resolveCrossStackCatalogEquivalents,
+    checkOntologyCompatibility,
+    synthesizeBrickBinding
 } from '../brick-exchange.js';
 
 const TOOL_NAME = 'krusch-lego';
@@ -161,7 +169,12 @@ function parseCliArgs(argv = []) {
         expiresDays: undefined,
         viewer: '',
         query: '',
-        repoRoot: ''
+        repoRoot: '',
+        stack: '',
+        channel: '',
+        ports: '',
+        asOf: '',
+        sample: ''
     };
 
     const stringFlagMap = {
@@ -179,7 +192,12 @@ function parseCliArgs(argv = []) {
         '--hash': 'hash',
         '--viewer': 'viewer',
         '--query': 'query',
-        '--repo-root': 'repoRoot'
+        '--repo-root': 'repoRoot',
+        '--stack': 'stack',
+        '--channel': 'channel',
+        '--ports': 'ports',
+        '--as-of': 'asOf',
+        '--sample': 'sample'
     };
 
     for (let i = 0; i < argv.length; i++) {
@@ -1110,9 +1128,154 @@ export async function runCli(argv = process.argv.slice(2), io = {}) {
         return { exitCode: 0, payload };
     }
 
+    if (command === 'ontology') {
+        const sub = (positionals[1] || 'inspect').toLowerCase();
+        if (sub === 'inspect') {
+            const filter = positionals[2] || flags.runtime || flags.query || '';
+            const eqRes = resolveCrossStackCatalogEquivalents(filter);
+            const payload = okOut('Inspected 4-axis Brick Exchange ontology and cross-stack catalog', {
+                stacks: ONTOLOGY_STACKS,
+                ports: ONTOLOGY_DATA_PORTS,
+                channels: ONTOLOGY_CHANNELS,
+                moeProfiles: ONTOLOGY_MOE_PROFILES,
+                crossStackEquivalents: CROSS_STACK_BRICK_EQUIVALENTS,
+                catalogCoverage: eqRes.ok ? eqRes.data : null
+            });
+            const lines = [
+                payload.summary,
+                `Stacks (${Object.keys(ONTOLOGY_STACKS).length}): ${Object.keys(ONTOLOGY_STACKS).join(', ')}`,
+                `Ports (${Object.keys(ONTOLOGY_DATA_PORTS).length}): ${Object.keys(ONTOLOGY_DATA_PORTS).join(', ')}`,
+                `Channels (${Object.keys(ONTOLOGY_CHANNELS).length}): ${Object.keys(ONTOLOGY_CHANNELS).join(', ')}`,
+                `MoE Profiles (${Object.keys(ONTOLOGY_MOE_PROFILES).length}): ${Object.keys(ONTOLOGY_MOE_PROFILES).join(', ')}`
+            ];
+            emitResponse(payload, flags.json, lines, writeOut, writeErr);
+            return { exitCode: 0, payload };
+        }
+
+        if (sub === 'check') {
+            const bundlePathRaw = positionals[2] || '';
+            if (!bundlePathRaw || !fs.existsSync(path.resolve(bundlePathRaw))) {
+                const payload = errOut(
+                    'MISSING_BUNDLE',
+                    'Usage: krusch-lego ontology check <bundlePath> [--stack <stackSlug>] [--channel <channelId>] [--sample <jsonPath>] [--json]'
+                );
+                emitResponse(payload, flags.json, [], writeOut, writeErr);
+                return { exitCode: 1, payload };
+            }
+            const bundle = JSON.parse(fs.readFileSync(path.resolve(bundlePathRaw), 'utf8'));
+            const sampleData =
+                flags.sample && fs.existsSync(path.resolve(flags.sample))
+                    ? JSON.parse(fs.readFileSync(path.resolve(flags.sample), 'utf8'))
+                    : undefined;
+            const res = checkOntologyCompatibility({
+                bundle,
+                targetStack: flags.stack || 'node-esm',
+                targetChannel: flags.channel || null,
+                sampleData
+            });
+            if (!res.ok) {
+                const payload = errOut(res.error?.code || 'ONTOLOGY_CHECK_FAILED', res.error?.message || 'Check failed', res.error?.details ?? null);
+                emitResponse(payload, flags.json, [], writeOut, writeErr);
+                return { exitCode: 1, payload };
+            }
+            const payload = okOut(res.summary, res.data);
+            emitResponse(payload, flags.json, [res.summary, `Bridge Mode: ${res.data.bridgeMode}`], writeOut, writeErr);
+            return { exitCode: 0, payload };
+        }
+
+        if (sub === 'compose') {
+            if (!flags.db || !flags.viewer) {
+                const payload = errOut(
+                    'MISSING_ARGS',
+                    'Usage: krusch-lego ontology compose --db <sqlitePath> --viewer <memberId> [--stack <stackSlug>] [--channel <channelId>] [--ports <csvPorts>] [--as-of <YYYY-MM-DD>] [--json]'
+                );
+                emitResponse(payload, flags.json, [], writeOut, writeErr);
+                return { exitCode: 1, payload };
+            }
+            const requiredPorts = flags.ports
+                ? flags.ports.split(',').map((s) => s.trim()).filter(Boolean)
+                : [];
+            const store = createBrickExchangeStore({ dbPath: path.resolve(flags.db) });
+            try {
+                const res = await store.planCrossStackComposition({
+                    viewerId: flags.viewer,
+                    targetStack: flags.stack || null,
+                    targetChannel: flags.channel || null,
+                    requiredPorts,
+                    asOf: flags.asOf || null
+                });
+                if (!res.ok) {
+                    const payload = errOut(res.error?.code || 'ONTOLOGY_COMPOSE_FAILED', res.error?.message || 'Compose failed', res.error?.details ?? null);
+                    emitResponse(payload, flags.json, [], writeOut, writeErr);
+                    return { exitCode: 1, payload };
+                }
+                const payload = okOut(res.summary, res.data);
+                const lines = [
+                    res.summary,
+                    `Direct Matches: ${res.data.directMatches.length}`,
+                    `2-Hop Chains:   ${res.data.compositions.length}`,
+                    `Retired (SUPERSEDES): ${res.data.retiredSupersededBricks.length}`
+                ];
+                emitResponse(payload, flags.json, lines, writeOut, writeErr);
+                return { exitCode: 0, payload };
+            } finally {
+                store.close();
+            }
+        }
+
+        if (sub === 'bind') {
+            const bundlePathRaw = positionals[2] || '';
+            if (!bundlePathRaw || !fs.existsSync(path.resolve(bundlePathRaw))) {
+                const payload = errOut(
+                    'MISSING_BUNDLE',
+                    'Usage: krusch-lego ontology bind <bundlePath> [--stack <stackSlug>] [--sample <jsonPath>] [--out <adapterPath>] [--json]'
+                );
+                emitResponse(payload, flags.json, [], writeOut, writeErr);
+                return { exitCode: 1, payload };
+            }
+            const bundle = JSON.parse(fs.readFileSync(path.resolve(bundlePathRaw), 'utf8'));
+            const samplePath = flags.sample || flags.input || '';
+            const localSample =
+                samplePath && fs.existsSync(path.resolve(samplePath))
+                    ? JSON.parse(fs.readFileSync(path.resolve(samplePath), 'utf8'))
+                    : undefined;
+            const res = await synthesizeBrickBinding({
+                bundle,
+                targetStack: flags.stack || 'node-esm',
+                localSample
+            });
+            if (!res.ok) {
+                const payload = errOut(res.error?.code || 'ONTOLOGY_BIND_FAILED', res.error?.message || 'Bind failed', res.error?.details ?? null);
+                emitResponse(payload, flags.json, [], writeOut, writeErr);
+                return { exitCode: 1, payload };
+            }
+            if (flags.out) {
+                const outAbs = path.resolve(flags.out);
+                fs.mkdirSync(path.dirname(outAbs), { recursive: true });
+                fs.writeFileSync(outAbs, res.data.adapterSource, 'utf8');
+            }
+            const payload = okOut(res.summary, res.data);
+            emitResponse(
+                payload,
+                flags.json,
+                [res.summary, `Adapter: ${res.data.adapterFileName} (${res.data.cascadeTierUsed})`],
+                writeOut,
+                writeErr
+            );
+            return { exitCode: 0, payload };
+        }
+
+        const payload = errOut(
+            'UNKNOWN_ONTOLOGY_SUBCOMMAND',
+            `Unknown ontology subcommand "${sub}". Expected: inspect, check, compose, bind`
+        );
+        emitResponse(payload, flags.json, [], writeOut, writeErr);
+        return { exitCode: 1, payload };
+    }
+
     const payload = errOut(
         'UNKNOWN_COMMAND',
-        `Unknown command "${command}". Expected one of: list, inspect, stamp, audit, scout, keygen, seal, verify, try, adopt, suggest, share, revoke, inbox, hub, mcp, blast-radius, fanout`
+        `Unknown command "${command}". Expected one of: list, inspect, stamp, audit, scout, keygen, seal, verify, try, adopt, suggest, share, revoke, inbox, hub, mcp, blast-radius, fanout, ontology`
     );
     emitResponse(payload, flags.json, [], writeOut, writeErr);
     return { exitCode: 1, payload };

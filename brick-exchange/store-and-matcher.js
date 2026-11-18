@@ -31,6 +31,11 @@ import {
     canPublishBrick,
     canReceiveBrick,
 } from './seal-and-policy.js';
+import {
+    compileBrickOntologyGraph,
+    traverseBrickOntology,
+    synthesizeBrickBinding,
+} from './ontology.js';
 
 const SAFE_SLUG_RE = /^[a-z0-9][a-z0-9-_]{1,63}$/;
 const VALID_RECEIVE_MODES = new Set(['off', 'team', 'federated']);
@@ -2223,6 +2228,65 @@ export function createBrickExchangeStore({
         return auditLog.verify();
     }
 
+    async function planCrossStackComposition({
+        viewerId,
+        targetStack = null,
+        targetChannel = null,
+        requiredPorts = [],
+        availableInputPorts = [],
+        orgProfiles = [],
+        asOf = null,
+        maxHops = 2,
+        namespace = 'brick-ontology',
+        hydraOpenCypherClient = null,
+        nowMs = safeNowMs(),
+    } = {}) {
+        const tool = 'brick-exchange.ontology.compose';
+        if (typeof viewerId !== 'string' || viewerId.trim().length === 0) {
+            return errorEnvelope('VIEWER_REQUIRED', 'viewerId is required for permission-gated ontology traversal', null, tool);
+        }
+
+        // Permission-Before-Traversal: ONLY bricks authorized for viewerId enter the ontology graph
+        const visibleRes = listVisibleBricks({ viewerId: viewerId.trim(), nowMs });
+        if (!visibleRes.ok) {
+            return visibleRes;
+        }
+
+        const authorizedBundles = (visibleRes.data?.bricks || []).filter(Boolean);
+        const graphRes = compileBrickOntologyGraph({
+            bricks: authorizedBundles,
+            orgProfiles: Array.isArray(orgProfiles) ? orgProfiles : [],
+            namespace,
+        });
+        if (!graphRes.ok) {
+            return graphRes;
+        }
+
+        const travRes = await traverseBrickOntology(graphRes.data, {
+            targetStack,
+            targetChannel,
+            requiredPorts,
+            availableInputPorts,
+            asOf,
+            maxHops,
+            hydraOpenCypherClient,
+        });
+        if (!travRes.ok) {
+            return travRes;
+        }
+
+        return okEnvelope(
+            tool,
+            `Evaluated ${authorizedBundles.length} authorized brick(s) for viewer "${viewerId.trim()}" (${travRes.data.directMatches.length} direct, ${travRes.data.compositions.length} 2-hop composition(s))`,
+            {
+                viewerId: viewerId.trim(),
+                authorizedBrickCount: authorizedBundles.length,
+                graphStats: graphRes.data.stats,
+                ...travRes.data,
+            }
+        );
+    }
+
     function close() {
         auditLog.close();
         sqliteHandle.close();
@@ -2247,6 +2311,7 @@ export function createBrickExchangeStore({
         getVisibleBrick,
         listVisibleBricks,
         suggestRecipients,
+        planCrossStackComposition,
         recordAdoption,
         listAdoptions,
         getPortfolioStats,
@@ -2360,6 +2425,9 @@ export async function adoptBrickIntoRepo({
     grantId = null,
     adoptedBy = 'local-dev',
     sampleInput = undefined,
+    localSample = undefined,
+    targetStack = null,
+    fieldMap = null,
     binding = {},
     customRunner = null,
 } = {}) {
@@ -2390,6 +2458,28 @@ export async function adoptBrickIntoRepo({
             { brickId: bundle.brickId },
             tool
         );
+    }
+
+    let synthesizedBindingData = null;
+    if (
+        !bindingSource &&
+        (targetStack !== null ||
+            (fieldMap && typeof fieldMap === 'object' && Object.keys(fieldMap).length > 0) ||
+            localSample !== undefined)
+    ) {
+        const resolvedTargetStack =
+            targetStack || (bundle.blueprint?.language === 'ts' ? 'typescript-node' : 'node-esm');
+        const synthRes = await synthesizeBrickBinding({
+            bundle,
+            targetStack: resolvedTargetStack,
+            localSample,
+            fieldMap: fieldMap && typeof fieldMap === 'object' ? fieldMap : {},
+            bindingOverrides: binding && typeof binding === 'object' ? binding : {},
+        });
+        if (!synthRes.ok) {
+            return synthRes;
+        }
+        synthesizedBindingData = synthRes.data;
     }
 
     if (sampleInput !== undefined) {
@@ -2449,7 +2539,8 @@ export async function adoptBrickIntoRepo({
     const entryFileName = bundle.blueprint?.language === 'ts' ? 'index.ts' : 'index.js';
     const entryPath = path.join(realBrickDir, entryFileName);
     const bundleSealPath = path.join(realBrickDir, 'bundle.seal.json');
-    const bindingPath = path.join(realBrickDir, 'binding.js');
+    const resolvedAdapterName = synthesizedBindingData?.adapterFileName || 'binding.js';
+    const bindingPath = path.join(realBrickDir, resolvedAdapterName);
     const lockfilePath = path.join(realRepoDir, '.brick-lock.json');
 
     for (const candidateFile of [entryPath, bundleSealPath, bindingPath, lockfilePath]) {
@@ -2470,7 +2561,9 @@ export async function adoptBrickIntoRepo({
         const starterBinding =
             typeof bindingSource === 'string' && bindingSource.length > 0
                 ? bindingSource
-                : `// Local adapter binding for ${bundle.brickId}\nexport const binding = {};\n`;
+                : synthesizedBindingData?.adapterSource
+                  ? synthesizedBindingData.adapterSource
+                  : `// Local adapter binding for ${bundle.brickId}\nexport const binding = {};\n`;
         fs.writeFileSync(bindingPath, starterBinding, 'utf8');
     }
 
@@ -2533,6 +2626,7 @@ export async function adoptBrickIntoRepo({
             bindingPath,
             bundlePath: bundleSealPath,
             lockfilePath,
+            ...(synthesizedBindingData ? { synthesizedBinding: synthesizedBindingData } : {}),
         }
     );
 }

@@ -32,6 +32,17 @@ import {
     planAgentFanOut,
     verifyTwoHopBlastRadius,
 } from './blast-radius.js';
+import {
+    ONTOLOGY_STACKS,
+    ONTOLOGY_DATA_PORTS,
+    ONTOLOGY_CHANNELS,
+    ONTOLOGY_MOE_PROFILES,
+    CROSS_STACK_BRICK_EQUIVALENTS,
+    resolveCrossStackCatalogEquivalents,
+    normalizeBrickOntologyMetadata,
+    checkOntologyCompatibility,
+    synthesizeBrickBinding,
+} from './ontology.js';
 
 const HUB_TOOL = 'brick-exchange.hub';
 
@@ -1194,6 +1205,96 @@ export function createBrickExchangeServer({
             }
             return res;
         },
+
+        'GET /api/ontology': (ctx) => {
+            const auth = authenticateAndResolveViewer(ctx);
+            if (!auth.ok) return;
+            const filter = ctx.query?.brick || ctx.query?.runtime || '';
+            const catalogEquivalents = resolveCrossStackCatalogEquivalents(filter);
+            return okEnvelope(HUB_TOOL, 'Returned 4-axis Brick Exchange ontology and cross-stack catalog', {
+                stacks: ONTOLOGY_STACKS,
+                ports: ONTOLOGY_DATA_PORTS,
+                channels: ONTOLOGY_CHANNELS,
+                moeProfiles: ONTOLOGY_MOE_PROFILES,
+                crossStackEquivalents: CROSS_STACK_BRICK_EQUIVALENTS,
+                catalogCoverage: catalogEquivalents.ok ? catalogEquivalents.data : null,
+            });
+        },
+
+        'POST /api/ontology/check': (ctx) => {
+            const auth = authenticateAndResolveViewer(ctx);
+            if (!auth.ok) return;
+            const body = ctx.body || {};
+            const resolved = resolveBundleFromArgsOrStore(store, {
+                ...body,
+                viewerId: auth.viewerId || body.viewerId,
+            });
+            if (!resolved.ok) {
+                const errEnv = errorEnvelope(resolved.code, resolved.message, resolved.details ?? null, HUB_TOOL);
+                ctx.sendJson(statusForStoreError(errEnv), errEnv);
+                return;
+            }
+            const res = checkOntologyCompatibility({
+                ...body,
+                bundle: resolved.bundle,
+            });
+            if (!res.ok) {
+                ctx.sendJson(400, res);
+                return;
+            }
+            return res;
+        },
+
+        'POST /api/ontology/compose': async (ctx) => {
+            const auth = authenticateAndResolveViewer(ctx);
+            if (!auth.ok) return;
+            const viewerId = auth.viewerId || cleanIdentifier(ctx.body?.viewerId);
+            if (!viewerId) {
+                ctx.sendJson(
+                    401,
+                    errorEnvelope(
+                        'VIEWER_REQUIRED',
+                        'Viewer identity is required via Bearer token, X-Brick-Viewer header, or viewerId payload field',
+                        null,
+                        HUB_TOOL
+                    )
+                );
+                return;
+            }
+            const res = await store.planCrossStackComposition({
+                ...(ctx.body || {}),
+                viewerId,
+            });
+            if (!res.ok) {
+                ctx.sendJson(statusForStoreError(res), res);
+                return;
+            }
+            return res;
+        },
+
+        'POST /api/ontology/bind': async (ctx) => {
+            const auth = authenticateAndResolveViewer(ctx);
+            if (!auth.ok) return;
+            const body = ctx.body || {};
+            const resolved = resolveBundleFromArgsOrStore(store, {
+                ...body,
+                viewerId: auth.viewerId || body.viewerId,
+            });
+            if (!resolved.ok) {
+                const errEnv = errorEnvelope(resolved.code, resolved.message, resolved.details ?? null, HUB_TOOL);
+                ctx.sendJson(statusForStoreError(errEnv), errEnv);
+                return;
+            }
+            const res = await synthesizeBrickBinding({
+                ...body,
+                bundle: resolved.bundle,
+            });
+            if (!res.ok) {
+                ctx.sendJson(400, res);
+                return;
+            }
+            return res;
+        },
     };
 
     return createApiServer({
@@ -1239,6 +1340,7 @@ export const BRICK_EXCHANGE_MCP_TOOLS = Object.freeze([
                 publicKeyPem: { type: 'string', description: 'Optional Ed25519 SPKI public key PEM' },
                 requirementId: { type: 'string', description: 'Optional spec or requirement lineage ID' },
                 provenance: { type: 'string', description: 'Provenance label' },
+                ontology: { type: 'object', description: 'Optional 4-axis ontology metadata (stacks, consumesPorts, producesPorts, channels, moeProfile, supersedes)' },
                 publish: { type: 'boolean', description: 'Publish sealed bundle directly to store when true' },
                 actorId: { type: 'string', description: 'Optional publishing actor override' },
                 timeoutMs: { type: 'number', description: 'Per-check sandbox wall-clock timeout in ms' },
@@ -1330,6 +1432,10 @@ export const BRICK_EXCHANGE_MCP_TOOLS = Object.freeze([
             properties: {
                 viewerId: { type: 'string', description: 'Recipient member ID' },
                 query: { type: 'string', description: 'Optional FTS5 or keyword search query' },
+                targetStack: { type: 'string', description: 'Optional stack slug (e.g. node-esm, cloudflare-edge, python-fastapi) for ontology composition' },
+                targetChannel: { type: 'string', description: 'Optional channel ID (e.g. webhook:stripe, workspace:gmail)' },
+                requiredPorts: { type: 'array', items: { type: 'string' }, description: 'Optional canonical or scoped ports to resolve via 1-to-2-hop composition' },
+                asOf: { type: 'string', description: 'Optional ISO date (YYYY-MM-DD) for SUPERSEDES historical replay' },
             },
         },
         readOnlyHint: true,
@@ -1382,6 +1488,9 @@ export const BRICK_EXCHANGE_MCP_TOOLS = Object.freeze([
                 grantId: { type: 'string', description: 'Optional cross-org grant ID' },
                 adoptedBy: { type: 'string', description: 'Adopter identifier written to .brick-lock.json' },
                 sampleInput: { description: 'Optional pre-vendor local sampleInput check' },
+                localSample: { description: 'Optional recipient local sample for $0/MoE hexagonal binding synthesis' },
+                targetStack: { type: 'string', description: 'Optional target stack slug (node-esm, typescript-node, python-fastapi, react-vite, cloudflare-edge)' },
+                fieldMap: { type: 'object', description: 'Optional explicit { canonicalField: localField } overrides for binding synthesis' },
                 binding: { type: 'object', description: 'Optional local binding for pre-vendor sampleInput check' },
                 recordInStore: { type: 'boolean', description: 'Whether to record adoption in store' },
                 hydraRequestId: { type: 'string', description: 'Optional HydraDB request ID for positive feedback' },
@@ -1530,8 +1639,28 @@ export async function createBrickExchangeMcpServer({
 
         switch (toolName) {
             case 'brick_seal': {
+                let effectiveBlueprint = args.blueprint;
+                if (args.ontology && typeof args.ontology === 'object' && args.blueprint && typeof args.blueprint === 'object') {
+                    const normOnt = normalizeBrickOntologyMetadata(args.ontology, {
+                        source: args.source,
+                        blueprint: args.blueprint,
+                    });
+                    if (!normOnt.ok) {
+                        return errorMcpResult(
+                            'brick_seal',
+                            normOnt.error?.code || 'INVALID_ONTOLOGY',
+                            normOnt.error?.message || normOnt.summary,
+                            normOnt.error?.details ?? null
+                        );
+                    }
+                    effectiveBlueprint = {
+                        ...args.blueprint,
+                        ontology: normOnt.data.ontology,
+                    };
+                }
+
                 const verifyRes = await runBrickVerificationGates({
-                    blueprint: args.blueprint,
+                    blueprint: effectiveBlueprint,
                     source: args.source,
                     positiveChecks: Array.isArray(args.positiveChecks) ? args.positiveChecks : [],
                     faultChecks: Array.isArray(args.faultChecks) ? args.faultChecks : [],
@@ -1594,7 +1723,7 @@ export async function createBrickExchangeMcpServer({
                 }
 
                 const sealRes = sealVerifiedBrick({
-                    blueprint: args.blueprint,
+                    blueprint: effectiveBlueprint,
                     source: args.source,
                     verificationReport: verifyRes.data,
                     authorId: args.authorId || args.actorId || 'local-author',
@@ -1771,7 +1900,35 @@ export async function createBrickExchangeMcpServer({
                         res.error?.details ?? null
                     );
                 }
-                return okMcpResult('brick_inbox', res.summary, res.data);
+                let ontologyComposition = null;
+                if (
+                    typeof store.planCrossStackComposition === 'function' &&
+                    (args.targetStack ||
+                        args.targetChannel ||
+                        (Array.isArray(args.requiredPorts) && args.requiredPorts.length > 0) ||
+                        args.asOf)
+                ) {
+                    const compRes = await store.planCrossStackComposition({
+                        viewerId: args.viewerId,
+                        targetStack: args.targetStack || null,
+                        targetChannel: args.targetChannel || null,
+                        requiredPorts: Array.isArray(args.requiredPorts) ? args.requiredPorts : [],
+                        asOf: args.asOf || null,
+                    });
+                    if (!compRes.ok) {
+                        return errorMcpResult(
+                            'brick_inbox',
+                            compRes.error?.code || 'ONTOLOGY_COMPOSE_FAILED',
+                            compRes.error?.message || compRes.summary,
+                            compRes.error?.details ?? null
+                        );
+                    }
+                    ontologyComposition = compRes.data;
+                }
+                return okMcpResult('brick_inbox', res.summary, {
+                    ...res.data,
+                    ...(ontologyComposition ? { ontologyComposition } : {}),
+                });
             }
 
             case 'brick_try_local': {
@@ -1813,6 +1970,9 @@ export async function createBrickExchangeMcpServer({
                     grantId: args.grantId || null,
                     adoptedBy: adopter,
                     sampleInput: args.sampleInput,
+                    localSample: args.localSample,
+                    targetStack: args.targetStack || null,
+                    fieldMap: args.fieldMap || null,
                     binding: args.binding || {},
                     customRunner: typeof args.customRunner === 'function' ? args.customRunner : null,
                 });

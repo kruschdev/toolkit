@@ -54,6 +54,26 @@ import {
     planAgentFanOut,
     verifyTwoHopBlastRadius
 } from './brick-exchange/blast-radius.js';
+import {
+    ONTOLOGY_STACKS,
+    ONTOLOGY_DATA_PORTS,
+    ONTOLOGY_CHANNELS,
+    ONTOLOGY_MOE_PROFILES,
+    CROSS_STACK_BRICK_EQUIVALENTS,
+    CANONICAL_SHARED_TYPES,
+    resolveCrossStackCatalogEquivalents,
+    isWebStandardPureSource,
+    parsePortReference,
+    arePortsCompatible,
+    normalizeBrickOntologyMetadata,
+    checkOntologyCompatibility,
+    surrogateOntologyVertexId,
+    compileBrickOntologyGraph,
+    syncBrickOntologyToHydra,
+    traverseBrickOntology,
+    applyFieldMapToSample,
+    synthesizeBrickBinding
+} from './brick-exchange/ontology.js';
 
 export {
     DEFAULT_SANDBOX_TIMEOUT_MS,
@@ -82,7 +102,25 @@ export {
     extractRepoAstGraph,
     analyzeBrickBlastRadius,
     planAgentFanOut,
-    verifyTwoHopBlastRadius
+    verifyTwoHopBlastRadius,
+    ONTOLOGY_STACKS,
+    ONTOLOGY_DATA_PORTS,
+    ONTOLOGY_CHANNELS,
+    ONTOLOGY_MOE_PROFILES,
+    CROSS_STACK_BRICK_EQUIVALENTS,
+    CANONICAL_SHARED_TYPES,
+    resolveCrossStackCatalogEquivalents,
+    isWebStandardPureSource,
+    parsePortReference,
+    arePortsCompatible,
+    normalizeBrickOntologyMetadata,
+    checkOntologyCompatibility,
+    surrogateOntologyVertexId,
+    compileBrickOntologyGraph,
+    syncBrickOntologyToHydra,
+    traverseBrickOntology,
+    applyFieldMapToSample,
+    synthesizeBrickBinding
 };
 
 /**
@@ -109,14 +147,27 @@ export async function sealBrick(options = {}) {
         publicKeyPem = '',
         requirementId = null,
         provenance = 'agent-verified',
+        ontology = null,
         createdAt = new Date().toISOString(),
         customRunner = null,
         timeoutMs = DEFAULT_SANDBOX_TIMEOUT_MS,
         maxMemoryMb = DEFAULT_SANDBOX_MAX_MEMORY_MB
     } = options;
 
+    let effectiveBlueprint = blueprint;
+    if (ontology && typeof ontology === 'object' && blueprint && typeof blueprint === 'object') {
+        const normRes = normalizeBrickOntologyMetadata(ontology, { source, blueprint });
+        if (!normRes.ok) {
+            return normRes;
+        }
+        effectiveBlueprint = {
+            ...blueprint,
+            ontology: normRes.data.ontology
+        };
+    }
+
     const verifyRes = await runBrickVerificationGates({
-        blueprint,
+        blueprint: effectiveBlueprint,
         source,
         positiveChecks,
         faultChecks,
@@ -149,7 +200,7 @@ export async function sealBrick(options = {}) {
     }
 
     const sealRes = sealVerifiedBrick({
-        blueprint,
+        blueprint: effectiveBlueprint,
         source,
         verificationReport: verifyRes.data,
         authorId,

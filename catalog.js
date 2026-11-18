@@ -840,7 +840,18 @@ const page = buildKeysetPage(rows, { limit, sortField: 'createdAt', idField: 'id
             'verifyTwoHopBlastRadius',
             'sealBrick',
             'runBrickRepairLoop',
-            'stageScoutCandidateSpecs'
+            'stageScoutCandidateSpecs',
+            'ONTOLOGY_STACKS',
+            'ONTOLOGY_DATA_PORTS',
+            'ONTOLOGY_CHANNELS',
+            'ONTOLOGY_MOE_PROFILES',
+            'CROSS_STACK_BRICK_EQUIVALENTS',
+            'resolveCrossStackCatalogEquivalents',
+            'checkOntologyCompatibility',
+            'compileBrickOntologyGraph',
+            'syncBrickOntologyToHydra',
+            'traverseBrickOntology',
+            'synthesizeBrickBinding'
         ],
         summary: 'Cryptographically attested multi-programmer Validated Brick Exchange with Node 22 --permission sandbox, 4-gate Ed25519 sealing, scoped grants, local binding verification, and .brick-lock.json drift gate.',
         snippet: `import { sealBrick, tryBrickLocally, adoptBrickIntoRepo } from '@krusch/toolkit/brick-exchange';

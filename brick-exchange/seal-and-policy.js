@@ -613,6 +613,7 @@ export function sealVerifiedBrick({
         replacesBoilerplate: String(replacesBoilerplate || ''),
         estimatedHoursSaved: safeHoursSaved,
         blueprint: frozenBlueprint,
+        ...(isPlainObject(frozenBlueprint.ontology) ? { ontology: frozenBlueprint.ontology } : {}),
         source,
         checks: checksSummary,
         lineage,
