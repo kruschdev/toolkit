@@ -13,7 +13,15 @@
 
 ---
 
-## 🎬 Narrated Architecture Walkthrough — *The Golden Bricks* (`1080p`)
+## 🎬 Narrated Architecture Walkthroughs (`1080p`)
+
+### 1. *Validated Brick Exchange & DEADBOLT 2-Hop Agent Waves* (`01:15` · New in `v1.8.1`)
+
+[![Watch @krusch/toolkit/brick-exchange + DEADBOLT Launch Video (01:15 · 1080p HD)](docs/assets/brick-exchange-launch-card.jpg)](https://krusch.dev/assets/video/brick-exchange-launch.mp4)
+
+> ▶️ **[Stream 1080p HD Launch Video (`01:15`, with audio)](https://krusch.dev/assets/video/brick-exchange-launch.mp4)** · **[Architecture Paper on `krusch.dev`](https://krusch.dev/articles/mit-open-source-brick-exchange-common-ground-deadbolt)** · **[Local MP4 (`6.5 MiB`)](docs/assets/brick-exchange-launch.mp4)** · **[Closed Captions (`.srt`)](docs/assets/brick-exchange-launch.srt)**
+
+### 2. *The Golden Bricks* Full Suite Tour (`02:26`)
 
 [![Watch @krusch/toolkit: The Golden Bricks Narrated Walkthrough (02:26 · 1080p HD)](docs/assets/krusch-toolkit-video-card.jpg)](https://krusch.dev/assets/video/krusch-toolkit-golden-bricks.mp4)
 
@@ -176,6 +184,8 @@ node ./bin/krusch-lego.js scout ./projects --portable --json
 ---
 
 ## 🤝 Multi-Engineer & Multi-Agent Validated Brick Exchange (`@krusch/toolkit/brick-exchange`)
+
+> 🎬 **[Watch the 01:15 Launch Video (`1080p` HD)](https://krusch.dev/assets/video/brick-exchange-launch.mp4)** · **[Read Paper #29: Fusing Common Ground & DEADBOLT Under MIT](https://krusch.dev/articles/mit-open-source-brick-exchange-common-ground-deadbolt)**
 
 Engineering teams and parallel coding-agent swarms hit three recurring failure modes when moving fast:
 1. **Unverified Cross-Team Copy-Paste**: Teams rebuild or copy subtle parsers, fee allocators, and webhook verifiers without proving fault-handling parity on their own data.

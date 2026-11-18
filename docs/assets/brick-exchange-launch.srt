@@ -1,0 +1,19 @@
+1
+00:00:00,240 --> 00:00:15,382
+Every engineering team hits this wall. One squad builds a solid login or billing helper, and the next team rewrites it from scratch because sharing raw repo files leaks private schemas and secrets. Add four AI agents at once, and they step right on each other's code.
+
+2
+00:00:15,907 --> 00:00:32,428
+At the EVOLVE hackathon, I built DEADBOLT to stop agents from breaking downstream files. Right after, I watched Anushka and Connor take 2nd place with Common Ground for safe cross-company code sharing. Both shipped under the MIT license, and the combo clicked right away.
+
+3
+00:00:32,953 --> 00:00:47,323
+So I fused both ideas into Brick Exchange. Every helper runs through four strict checks in a locked sandbox, including bad-input stress tests so lazy happy-path code gets rejected, then gets cryptographically signed so nothing can be tampered with.
+
+4
+00:00:47,873 --> 00:01:02,544
+Teammates can grab verified bricks right away, and outside partners can test them locally on private data using revocable passes. A lockfile flags any sneaky edits, while DEADBOLT schedules parallel coding agents in clean, conflict-free waves.
+
+5
+00:01:03,107 --> 00:01:13,965
+It's completely free under the MIT license, with full credit to Anushka and Connor's work on Common Ground. Grab the code on GitHub, or read the full story at krusch.dev.
