@@ -347,12 +347,17 @@ export type {
 export {
     HARNESS_SUBSYSTEMS,
     HARDLINE_POLICY_RULES,
+    DEFAULT_COCHANGE_RULES,
     deobfuscateShellCommand,
     validatePolicyRuleExamples,
     createFrozenPolicyFloor,
     delimitUntrustedContent,
     evaluateTruncationPoisoningGuard,
     evaluateVerifyOnStopGuard,
+    extractDiffTouchedFiles,
+    parseDiffOldHunks,
+    compileSafeCoChangeGlob,
+    evaluateCoChangeRules,
     normalizePromptCachePrefix,
     createDeferredToolBridge
 } from './harness-engineering.js';

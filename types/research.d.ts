@@ -307,6 +307,7 @@ export declare class EvidenceGroundingEngine {
 // ============================================================================
 export declare const HARNESS_SUBSYSTEMS: ReadonlyArray<Record<string, any>>;
 export declare const HARDLINE_POLICY_RULES: ReadonlyArray<Record<string, any>>;
+export declare const DEFAULT_COCHANGE_RULES: ReadonlyArray<Record<string, any>>;
 
 export declare function deobfuscateShellCommand(command: string): Record<string, any>;
 export declare function validatePolicyRuleExamples(
@@ -323,6 +324,27 @@ export declare function evaluateTruncationPoisoningGuard(
 export declare function evaluateVerifyOnStopGuard(
     turnState?: Record<string, any>
 ): Record<string, any>;
+export declare function extractDiffTouchedFiles(diffText: string): string[];
+export declare function parseDiffOldHunks(
+    diffText: string,
+    options?: { maxHunkLines?: number }
+): Record<string, Array<[number, number]>>;
+export declare function compileSafeCoChangeGlob(pattern: string): {
+    valid: boolean;
+    pattern: string;
+    regex: RegExp | null;
+    error: string | null;
+};
+export declare function evaluateCoChangeRules(params?: {
+    diff?: string;
+    changedFiles?: string[];
+    rules?: ReadonlyArray<Record<string, any>>;
+}): {
+    ok: boolean;
+    tool: string;
+    summary: string;
+    data: Record<string, any>;
+};
 export declare function normalizePromptCachePrefix(
     messages?: ReadonlyArray<Record<string, any>>,
     options?: Record<string, any>

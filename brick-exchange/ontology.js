@@ -2785,26 +2785,37 @@ export async function syncBrickOntologyToHydra(graphInput, options = {}) {
         let statementCount = 0;
         for (const node of graph.nodes) {
             await runCypher(
-                'MERGE (n:Entity {id: $id}) SET n.surrogateId = $surrogateId, n.kind = $kind, n.title = $title, n.isCurrent = $isCurrent, n.validFrom = $validFrom, n.retiredAt = $retiredAt, n.supersededBy = $supersededBy',
+                'MERGE (n:Entity {id: $surrogateId, namespace: $ns, logicalId: $id, kind: $kind, title: $title, isCurrent: $isCurrent})',
                 {
+                    ns: targetNamespace,
                     id: node.id,
                     surrogateId: node.surrogateId,
                     kind: node.kind,
                     title: node.title || '',
                     isCurrent: node.isCurrent !== false,
-                    validFrom: node.validFrom ?? null,
-                    retiredAt: node.retiredAt ?? null,
-                    supersededBy: node.supersededBy ?? null,
                 }
             );
             statementCount += 1;
         }
 
+        const surrogateByLogical = new Map(graph.nodes.map((n) => [n.id, n.surrogateId]));
         for (const edge of graph.edges) {
             if (!SAFE_CYPHER_REL_RE.test(edge.type)) continue;
+            const fromSurrogate =
+                surrogateByLogical.get(edge.from) ??
+                surrogateOntologyVertexId(targetNamespace, edge.from);
+            const toSurrogate =
+                surrogateByLogical.get(edge.to) ??
+                surrogateOntologyVertexId(targetNamespace, edge.to);
             await runCypher(
-                `MATCH (a:Entity {id: $from}), (b:Entity {id: $to}) MERGE (a)-[r:${edge.type}]->(b)`,
-                { from: edge.from, to: edge.to }
+                `MERGE (a:Entity {id: $fromId, namespace: $ns, logicalId: $from})-[r:${edge.type}]->(b:Entity {id: $toId, namespace: $ns, logicalId: $to})`,
+                {
+                    ns: targetNamespace,
+                    fromId: fromSurrogate,
+                    from: edge.from,
+                    toId: toSurrogate,
+                    to: edge.to,
+                }
             );
             statementCount += 1;
         }

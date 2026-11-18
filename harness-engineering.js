@@ -73,7 +73,7 @@ export const HARNESS_SUBSYSTEMS = deepFreeze([
     {
         id: 'verification_recovery',
         name: 'Verification & Self-Healing Recovery',
-        keyMechanisms: ['staged_diff_gate', 'automated_test_runner', 'bounded_verify_retries', 'actionable_error_feedback']
+        keyMechanisms: ['staged_diff_gate', 'cochange_companion_gate', 'automated_test_runner', 'bounded_verify_retries', 'actionable_error_feedback']
     },
     {
         id: 'memory_persistence',
@@ -735,7 +735,292 @@ export function evaluateVerifyOnStopGuard(turnState = {}) {
         };
     }
 
+    if (Array.isArray(turnState?.coChangeRules) && turnState.coChangeRules.length > 0) {
+        const coChangeCheck = evaluateCoChangeRules({
+            diff: typeof turnState.diff === 'string' ? turnState.diff : '',
+            changedFiles: Array.isArray(turnState.changedFiles) ? turnState.changedFiles : [],
+            rules: turnState.coChangeRules
+        });
+        if (!coChangeCheck.ok) {
+            const firstViolation = coChangeCheck.data.violations[0];
+            const detail = firstViolation
+                ? `${firstViolation.id} (${firstViolation.triggeredBy.join(', ')} touched without ${firstViolation.missingAnyOf.join(' or ')})`
+                : coChangeCheck.summary;
+            return {
+                allowStop: false,
+                action: 'FORCE_VERIFY',
+                reason: `Co-change companion file invariant failed: ${detail}.`,
+                correctivePrompt: `Cannot stop: deterministic co-change rule failed: ${detail}. Update the required companion file(s) before completing.`
+            };
+        }
+    }
+
     return { allowStop: true, action: 'ALLOW_STOP', reason: 'Verification satisfied or no unverified mutations.', correctivePrompt: null };
+}
+
+/**
+ * Default deterministic co-change companion-file invariants (INV-HE-07).
+ * Callers may pass custom rules or combine with `DEFAULT_COCHANGE_RULES`.
+ */
+export const DEFAULT_COCHANGE_RULES = deepFreeze([
+    {
+        id: 'COCHANGE-OPENAPI-DOCS',
+        severity: 'CRITICAL',
+        whenGlobs: ['openapi/**'],
+        requireGlobs: ['docs/changelog.md', 'CHANGELOG.md'],
+        description: 'Every OpenAPI contract update must include a changelog entry in the same change.'
+    },
+    {
+        id: 'COCHANGE-DB-MIGRATION-SCHEMA',
+        severity: 'CRITICAL',
+        whenGlobs: ['db/migrations/**'],
+        requireGlobs: ['db/schema.sql', 'src/db/schema.sql'],
+        description: 'Database migrations must stay synchronized with the canonical schema snapshot.'
+    }
+]);
+
+function normalizeDiffRelativePath(rawPath) {
+    if (!rawPath || typeof rawPath !== 'string') return null;
+    let cleaned = rawPath.trim();
+    if (!cleaned || cleaned === '/dev/null' || cleaned.includes('\0')) return null;
+    if ((cleaned.startsWith('"') && cleaned.endsWith('"')) || (cleaned.startsWith("'") && cleaned.endsWith("'"))) {
+        cleaned = cleaned.slice(1, -1);
+    }
+    cleaned = cleaned.replace(/\\/g, '/');
+    if (cleaned === 'a/dev/null' || cleaned === 'b/dev/null' || cleaned === '/dev/null') return null;
+    if (/^[ab]\//.test(cleaned)) {
+        cleaned = cleaned.slice(2);
+    }
+    cleaned = cleaned.replace(/^(?:\.\/)+/, '').replace(/^\/+/, '');
+    if (!cleaned) return null;
+    const parts = cleaned.split('/');
+    if (parts.some((p) => !p || p === '.' || p === '..')) return null;
+    return cleaned;
+}
+
+/**
+ * Extracts all repository-relative file paths touched by a unified diff,
+ * counting both old and new paths across `git mv` renames (INV-HE-07).
+ *
+ * @param {string} diffText - Unified git diff text.
+ * @returns {string[]} Unique normalized relative file paths in appearance order.
+ */
+export function extractDiffTouchedFiles(diffText) {
+    if (!diffText || typeof diffText !== 'string') return [];
+    const seen = new Set();
+    for (const line of diffText.split(/\r?\n/)) {
+        const diffGit = /^diff --git\s+(\S+)\s+(\S+)$/.exec(line);
+        if (diffGit) {
+            const left = normalizeDiffRelativePath(diffGit[1]);
+            const right = normalizeDiffRelativePath(diffGit[2]);
+            if (left) seen.add(left);
+            if (right) seen.add(right);
+            continue;
+        }
+        const renameFrom = /^rename from\s+(.+)$/.exec(line);
+        if (renameFrom) {
+            const p = normalizeDiffRelativePath(renameFrom[1]);
+            if (p) seen.add(p);
+            continue;
+        }
+        const renameTo = /^rename to\s+(.+)$/.exec(line);
+        if (renameTo) {
+            const p = normalizeDiffRelativePath(renameTo[1]);
+            if (p) seen.add(p);
+            continue;
+        }
+        const hdr = /^(?:---|\+\+\+)\s+([^\t\r\n]+)/.exec(line);
+        if (hdr) {
+            const p = normalizeDiffRelativePath(hdr[1]);
+            if (p) seen.add(p);
+        }
+    }
+    return Array.from(seen);
+}
+
+/**
+ * Parses old-side hunk line ranges (`@@ -start[,count] +... @@`) per file from a unified diff.
+ * Pure additions (`count === 0` or `--- /dev/null`) emit no old-side ranges.
+ *
+ * @param {string} diffText - Unified git diff text.
+ * @param {object} [options={}] - Parser options.
+ * @param {number} [options.maxHunkLines=200] - Per-hunk line span cap.
+ * @returns {Record<string, Array<[number, number]>>} Map of relative file path to `[startLine, endLine]` tuples.
+ */
+export function parseDiffOldHunks(diffText, options = {}) {
+    const maxHunkLines = Number.isFinite(options?.maxHunkLines) && options.maxHunkLines > 0
+        ? Math.floor(options.maxHunkLines)
+        : 200;
+    const out = {};
+    if (!diffText || typeof diffText !== 'string') return out;
+
+    let currentOldFile = null;
+    for (const line of diffText.split(/\r?\n/)) {
+        if (line.startsWith('diff --git ')) {
+            currentOldFile = null;
+            continue;
+        }
+        const fromMatch = /^---\s+([^\t\r\n]+)/.exec(line);
+        if (fromMatch) {
+            const raw = fromMatch[1].trim();
+            currentOldFile = raw === '/dev/null' ? null : normalizeDiffRelativePath(raw);
+            continue;
+        }
+        const hunkMatch = /^@@\s+-(\d+)(?:,(\d+))?\s+\+\d+(?:,\d+)?\s+@@/.exec(line);
+        if (hunkMatch && currentOldFile) {
+            const start = Number(hunkMatch[1]);
+            const count = hunkMatch[2] === undefined ? 1 : Number(hunkMatch[2]);
+            if (Number.isInteger(start) && start >= 1 && count > 0) {
+                if (!out[currentOldFile]) out[currentOldFile] = [];
+                out[currentOldFile].push([start, start + Math.min(count, maxHunkLines) - 1]);
+            }
+        }
+    }
+    return out;
+}
+
+/**
+ * Compiles a bounded glob supporting `*`, `**`, and `?` only.
+ * Explicitly rejects unsupported `{a,b}`, `[abc]`, `!`, and `\` syntax so rules never fail silently.
+ *
+ * @param {string} pattern - Candidate glob string.
+ * @returns {{ valid: boolean, pattern: string, regex: RegExp|null, error: string|null }} Compiled glob descriptor.
+ */
+export function compileSafeCoChangeGlob(pattern) {
+    const raw = typeof pattern === 'string' ? pattern.trim() : '';
+    if (!raw) {
+        return { valid: false, pattern: raw, regex: null, error: 'Glob pattern must be a non-empty string.' };
+    }
+    if (/[{}\[\]!\\]/.test(raw)) {
+        return {
+            valid: false,
+            pattern: raw,
+            regex: null,
+            error: `Unsupported glob syntax in "${raw}": only *, **, and ? are permitted.`
+        };
+    }
+    const normalized = raw.replace(/^(?:\.\/)+/, '').replace(/^\/+/, '');
+    if (!normalized || normalized.split('/').includes('..')) {
+        return { valid: false, pattern: raw, regex: null, error: `Invalid relative glob "${raw}".` };
+    }
+
+    let rx = '^';
+    let i = 0;
+    while (i < normalized.length) {
+        const ch = normalized[i];
+        if (ch === '*' && normalized[i + 1] === '*') {
+            const prevBoundary = i === 0 || normalized[i - 1] === '/';
+            if (prevBoundary && normalized[i + 2] === '/') {
+                rx += '(?:[^/]+/)*';
+                i += 3;
+                continue;
+            }
+            rx += '.*';
+            i += 2;
+            continue;
+        }
+        if (ch === '*') {
+            rx += '[^/]*';
+            i += 1;
+            continue;
+        }
+        if (ch === '?') {
+            rx += '[^/]';
+            i += 1;
+            continue;
+        }
+        rx += /[.+^$()|]/.test(ch) ? `\\${ch}` : ch;
+        i += 1;
+    }
+    rx += '$';
+    return { valid: true, pattern: normalized, regex: new RegExp(rx), error: null };
+}
+
+/**
+ * Evaluates deterministic co-change companion-file rules (`--when` -> `--require`)
+ * against a unified diff and/or changed-file list with zero LLM calls (INV-HE-07).
+ *
+ * @param {object} [params={}] - Evaluation inputs.
+ * @param {string} [params.diff=''] - Optional unified diff text.
+ * @param {string[]} [params.changedFiles=[]] - Optional explicit changed file paths.
+ * @param {Array<object>} [params.rules=DEFAULT_COCHANGE_RULES] - Co-change rule definitions.
+ * @returns {{ ok: boolean, tool: string, summary: string, data: object }} Canonical toolkit envelope.
+ */
+export function evaluateCoChangeRules(params = {}) {
+    const diff = typeof params?.diff === 'string' ? params.diff : '';
+    const extraFiles = Array.isArray(params?.changedFiles) ? params.changedFiles : [];
+    const rules = Array.isArray(params?.rules) ? params.rules : DEFAULT_COCHANGE_RULES;
+
+    const touchedSet = new Set(extractDiffTouchedFiles(diff));
+    for (const f of extraFiles) {
+        const norm = normalizeDiffRelativePath(f);
+        if (norm) touchedSet.add(norm);
+    }
+    const touchedFiles = Array.from(touchedSet);
+    const violations = [];
+    const invalidRules = [];
+
+    for (const rule of rules) {
+        if (!rule || typeof rule !== 'object') continue;
+        const id = String(rule.id || 'COCHANGE-RULE');
+        const rawWhen = Array.isArray(rule.whenGlobs || rule.when)
+            ? (rule.whenGlobs || rule.when)
+            : (rule.when ? [rule.when] : []);
+        const rawReq = Array.isArray(rule.requireGlobs || rule.require)
+            ? (rule.requireGlobs || rule.require)
+            : (rule.require ? [rule.require] : []);
+
+        if (rawWhen.length === 0 || rawReq.length === 0) {
+            invalidRules.push({ id, error: 'Rule requires non-empty whenGlobs and requireGlobs arrays.' });
+            continue;
+        }
+
+        const compiledWhen = rawWhen.map((g) => compileSafeCoChangeGlob(g));
+        const compiledReq = rawReq.map((g) => compileSafeCoChangeGlob(g));
+        const invalid = [...compiledWhen, ...compiledReq].find((c) => !c.valid);
+        if (invalid) {
+            invalidRules.push({ id, error: invalid.error });
+            continue;
+        }
+
+        if (touchedFiles.length === 0) continue;
+
+        const triggeredBy = touchedFiles.filter((file) => compiledWhen.some((c) => c.regex.test(file)));
+        if (triggeredBy.length === 0) continue;
+
+        const satisfied = touchedFiles.some((file) => compiledReq.some((c) => c.regex.test(file)));
+        if (!satisfied) {
+            const missingAnyOf = compiledReq.map((c) => c.pattern);
+            violations.push({
+                id,
+                severity: rule.severity || 'CRITICAL',
+                description: String(
+                    rule.description ||
+                    `Changes matching ${compiledWhen.map((c) => c.pattern).join(', ')} must also update ${missingAnyOf.join(' or ')}.`
+                ),
+                triggeredBy,
+                missingAnyOf
+            });
+        }
+    }
+
+    const ok = violations.length === 0 && invalidRules.length === 0;
+    const summary = ok
+        ? `Co-change check passed across ${touchedFiles.length} touched file(s) and ${rules.length} rule(s).`
+        : `Co-change check flagged ${violations.length} violation(s) and ${invalidRules.length} invalid rule(s).`;
+
+    return {
+        ok,
+        tool: 'cochange_guard',
+        summary,
+        data: {
+            passed: ok,
+            touchedFiles,
+            evaluatedCount: rules.length,
+            violations,
+            invalidRules
+        }
+    };
 }
 
 /**
