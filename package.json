@@ -122,6 +122,10 @@
             "types": "./types/browser.d.ts",
             "default": "./browser.js"
         },
+        "./easi": {
+            "types": "./types/easi.d.ts",
+            "default": "./easi.js"
+        },
         "./react": {
             "types": "./types/react.d.ts",
             "default": "./react.js"

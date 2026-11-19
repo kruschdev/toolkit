@@ -283,11 +283,22 @@ export {
 // Diverse Hypothesis Deliberation (DHD) & Trajectory Value Engine
 export { extractTrajectoryValue, evaluateDHDConsensus } from './dhd-deliberation.js';
 
-// ModularRSI: Modular and Generalizable Recursive Harness Self-Improvement
+// ModularRSI & Continual RSI via Self-Improvement Memory
 export {
     createModularRsiHarness,
+    createSelfImprovementMemory,
     RSI_MODULES,
-    DEFAULT_HARNESS_SPECS
+    DEFAULT_HARNESS_SPECS,
+    SIM_TRANSFER_MODES,
+    SIM_GUIDANCE_RULES
+} from './modular-rsi.js';
+export type {
+    RsiModuleName,
+    SimTransferMode,
+    SimAttemptRecord,
+    SimProblemEntry,
+    SimJsonRecord,
+    SelfImprovementMemory
 } from './modular-rsi.js';
 
 // Sovereign System 1 Decision Primitive (Single-Token Logit / Logprob Router)
@@ -1135,5 +1146,44 @@ export type {
     BrickTimeSeriesContract,
     BrickOntologyMetadata
 } from './brick-exchange.js';
+
+// Sandboxed easi.run Chrome MCP Client & Small-Model Browser Policy Floor (@krusch/toolkit/easi)
+export {
+    DEFAULT_EASI_WATCH_BASE,
+    DEFAULT_CHROME_OMNIBOX_MIN_Y,
+    DEFAULT_EDITOR_TAIL_SELECTOR,
+    MUTATING_EASI_TOOLS,
+    DEFAULT_LOCAL_NAVIGATOR_TIERS,
+    nextEasiCallId,
+    normalizeEditorWhitespace,
+    buildSimulatedEasiResponse,
+    callEasiMcpTool,
+    createEasiClient,
+    extractSafeWebElements,
+    resolveEasiChromeWindow,
+    captureCompactUiState,
+    stepSmallModelNavigator,
+    executeValidatedUiDecision,
+    readEditorTailDom,
+    detectResumableChunkIndex,
+    resolveBodyEditorClickPoint,
+    streamContentEditableChunks,
+    uploadFileViaChooser
+} from './easi.js';
+export type {
+    EasiLocalNavigatorTier,
+    EasiMcpToolResult,
+    EasiMcpCallerFn,
+    EasiCallOptions,
+    EasiClientOptions,
+    EasiClient,
+    EasiPixelFrame,
+    EasiSafeWebElement,
+    EasiDomElementDigest,
+    EasiCompactUiState,
+    EasiNavigatorDecision,
+    StepSmallModelNavigatorOptions,
+    EasiEditorTailSnapshot
+} from './easi.js';
 
 

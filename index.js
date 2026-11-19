@@ -139,8 +139,15 @@ export { createKvCacheManager, calculateKvCacheMetrics, calculateGvaFootprint, c
 // Diverse Hypothesis Deliberation (DHD) & Trajectory Value Engine (arXiv: 2608.14375 & arXiv: 2608.25937)
 export { extractTrajectoryValue, evaluateDHDConsensus } from './dhd-deliberation.js';
 
-// ModularRSI: Modular and Generalizable Recursive Harness Self-Improvement (arXiv: 2609.14857)
-export { createModularRsiHarness, RSI_MODULES, DEFAULT_HARNESS_SPECS } from './modular-rsi.js';
+// ModularRSI & Continual RSI via Self-Improvement Memory (arXiv: 2609.14857 & arXiv: 2611.18856)
+export {
+    createModularRsiHarness,
+    createSelfImprovementMemory,
+    RSI_MODULES,
+    DEFAULT_HARNESS_SPECS,
+    SIM_TRANSFER_MODES,
+    SIM_GUIDANCE_RULES
+} from './modular-rsi.js';
 
 // Sovereign System 1 Decision Primitive (Single-Token Logit / Logprob Router)
 export { decide, decideBatch, calibrateChoiceLogprobs, evaluateDeterministicDecision, createSystem1Decider } from './decide.js';
@@ -514,5 +521,29 @@ export {
     applyFieldMapToSample,
     synthesizeBrickBinding
 } from './brick-exchange.js';
+
+// Sandboxed easi.run Chrome MCP Client & Small-Model Browser Policy Floor (@krusch/toolkit/easi)
+export {
+    DEFAULT_EASI_WATCH_BASE,
+    DEFAULT_CHROME_OMNIBOX_MIN_Y,
+    DEFAULT_EDITOR_TAIL_SELECTOR,
+    MUTATING_EASI_TOOLS,
+    DEFAULT_LOCAL_NAVIGATOR_TIERS,
+    nextEasiCallId,
+    normalizeEditorWhitespace,
+    buildSimulatedEasiResponse,
+    callEasiMcpTool,
+    createEasiClient,
+    extractSafeWebElements,
+    resolveEasiChromeWindow,
+    captureCompactUiState,
+    stepSmallModelNavigator,
+    executeValidatedUiDecision,
+    readEditorTailDom,
+    detectResumableChunkIndex,
+    resolveBodyEditorClickPoint,
+    streamContentEditableChunks,
+    uploadFileViaChooser
+} from './easi.js';
 
 

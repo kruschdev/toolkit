@@ -7,8 +7,11 @@
 import assert from 'assert';
 import {
     createModularRsiHarness,
+    createSelfImprovementMemory,
     RSI_MODULES,
     DEFAULT_HARNESS_SPECS,
+    SIM_TRANSFER_MODES,
+    SIM_GUIDANCE_RULES,
     calculateGvaFootprint,
     createGvaAllocator,
     evaluateMultiAgentResilience,
@@ -152,6 +155,182 @@ async function runTests() {
         const history = harness.getEvolutionHistory();
         assert.strictEqual(history.length, 1);
         assert.strictEqual(history[0].moduleName, RSI_MODULES.TOOL_USE);
+    });
+
+    test("SIM & CRSI (arXiv: 2611.18856): Counterfactual Outcomes, Root-Cause Deduplication, Alias Merge & Unaccepted No-Op", () => {
+        assert.strictEqual(SIM_GUIDANCE_RULES.length, 8, "Must expose all 8 Appendix D.2 rules");
+
+        const sim = createSelfImprovementMemory();
+
+        // Eq. (3): Unaccepted candidates leave SIM untouched (U(M_t, ∅) = M_t)
+        const rejected = sim.recordAttempt({
+            accepted: false,
+            rootCause: "Premature task completion",
+            what: "Block stop before running pytest",
+            predicted: ["task_a"]
+        });
+        assert.strictEqual(rejected.updated, false);
+        assert.strictEqual(sim.toJSON().problems.length, 0);
+
+        // Accepted round-1 attempt with counterfactual predicted vs afterPassed (missed preserved even when accepted)
+        const r1 = sim.recordAttempt({
+            round: 1,
+            sample: 2,
+            accepted: true,
+            rootCause: "Premature task completion",
+            what: "Require execution-verified completion gate",
+            rationale: "Agent stopped before verifying command exit status",
+            files: ["harness/completion-gate.js"],
+            predicted: ["task_a", "task_b", "task_c"],
+            beforePassed: ["task_0"],
+            afterPassed: ["task_0", "task_a", "task_d"],
+            total: 10,
+            domain: "coding",
+            benchmark: "TB2.1",
+            policyModel: "claude-opus-5.5"
+        });
+        assert.strictEqual(r1.updated, true);
+        assert.strictEqual(r1.problemId, "P1");
+        assert.strictEqual(r1.createdNewProblem, true);
+        assert.deepStrictEqual(r1.attempt.fixed, ["task_a", "task_d"]);
+        assert.deepStrictEqual(r1.attempt.missed, ["task_b", "task_c"]);
+        assert.strictEqual(r1.attempt.passed, 3);
+
+        // Identical root-cause text (case/whitespace-normalized) appends to P1 instead of opening P2
+        const r2 = sim.recordAttempt({
+            round: 3,
+            sample: 1,
+            rootCause: "  premature   task COMPLETION ",
+            what: "Extend gate with deliverable optimality check",
+            predicted: ["task_b"],
+            afterPassed: ["task_0", "task_a", "task_b", "task_d"],
+            domain: "coding",
+            benchmark: "TB4",
+            policyModel: "claude-opus-5.5"
+        });
+        assert.strictEqual(r2.problemId, "P1");
+        assert.strictEqual(r2.createdNewProblem, false);
+        assert.strictEqual(sim.getProblem("P1").attempts.length, 2);
+
+        // Open P2 and P3, then merge P3 -> P2 and verify alias routing (Appendix D.3)
+        sim.recordAttempt({
+            round: 2,
+            rootCause: "Fragile tool-call JSON parser",
+            what: "Strip markdown fences before JSON.parse",
+            predicted: ["task_e"],
+            fixed: ["task_e"],
+            domain: "coding",
+            benchmark: "TB2.1",
+            policyModel: "claude-opus-5.5"
+        });
+        sim.recordAttempt({
+            round: 4,
+            rootCause: "Malformed function call serialization",
+            what: "Coerce stringified nested objects",
+            predicted: ["task_f"],
+            fixed: [],
+            domain: "coding",
+            benchmark: "TB2.1",
+            policyModel: "claude-opus-5.5"
+        });
+
+        const mergeRes = sim.mergeProblems("P3", "P2");
+        assert.strictEqual(mergeRes.merged, true);
+        assert.strictEqual(mergeRes.aliases.P3, "P2");
+        assert.strictEqual(sim.resolveProblemId("P3"), "P2");
+        assert.strictEqual(sim.getProblem("P3").id, "P2");
+        assert.strictEqual(sim.getProblem("P2").attempts.length, 2);
+
+        // Appending via aliased problemId routes cleanly to P2
+        const r5 = sim.recordAttempt({
+            problemId: "P3",
+            round: 5,
+            what: "Add mode=NONE fallback when tool list is empty",
+            predicted: ["task_f"],
+            afterPassed: ["task_f"],
+            domain: "coding",
+            benchmark: "TB4",
+            policyModel: "gemini-3.8-flash"
+        });
+        assert.strictEqual(r5.problemId, "P2");
+        assert.strictEqual(sim.getProblem("P2").attempts.length, 3);
+    });
+
+    test("SIM & CRSI (arXiv: 2611.18856): Four Transfer Conditions & Untruncated Optimizer Prompt Shift Advisories", () => {
+        const sourceHarness = createModularRsiHarness(
+            {},
+            { domain: "coding", benchmark: "TB2.1", policyModel: "claude-opus-5.5" }
+        );
+
+        const patched = sourceHarness.applyRsiPatch(
+            RSI_MODULES.TASK_COMPLETION,
+            { minimumConfidenceScore: 0.92 },
+            "Prevent premature exit before test verification",
+            {
+                round: 2,
+                rootCause: "Premature completion without test pass",
+                files: ["lib/modular-rsi.js"],
+                predicted: ["tb_11", "tb_19"],
+                afterPassed: ["tb_11"],
+                total: 20
+            }
+        );
+        assert.strictEqual(patched.version, 2);
+        assert.strictEqual(patched.simEntry.problemId, "P1");
+        assert.deepStrictEqual(patched.simEntry.attempt.missed, ["tb_19"]);
+
+        // 1. Cold Start: resets specs to seed (v1) and clears SIM
+        const cold = sourceHarness.continueHarness({
+            mode: SIM_TRANSFER_MODES.COLD_START,
+            benchmark: "TB4",
+            policyModel: "gemini-3.8-flash"
+        });
+        assert.strictEqual(cold.getModuleSpec(RSI_MODULES.TASK_COMPLETION).version, 1);
+        assert.strictEqual(cold.getSim().toJSON().problems.length, 0);
+        assert.strictEqual(cold.getSim().toJSON().carried_from, null);
+
+        // 2. Harness Transfer: keeps evolved specs (v2) with empty SIM
+        const harnessOnly = sourceHarness.continueHarness({
+            mode: SIM_TRANSFER_MODES.HARNESS_TRANSFER,
+            benchmark: "TB4",
+            policyModel: "gemini-3.8-flash"
+        });
+        assert.strictEqual(harnessOnly.getModuleSpec(RSI_MODULES.TASK_COMPLETION).minimumConfidenceScore, 0.92);
+        assert.strictEqual(harnessOnly.getSim().toJSON().problems.length, 0);
+        assert.strictEqual(harnessOnly.getSim().toJSON().carried_from.mode, SIM_TRANSFER_MODES.HARNESS_TRANSFER);
+
+        // 3. Problem-Only Memory: keeps evolved specs + root causes without attempt histories
+        const problemOnly = sourceHarness.continueHarness({
+            mode: SIM_TRANSFER_MODES.PROBLEM_ONLY,
+            benchmark: "TB4",
+            policyModel: "gemini-3.8-flash"
+        });
+        const poProblems = problemOnly.getSim().toJSON().problems;
+        assert.strictEqual(poProblems.length, 1);
+        assert.strictEqual(poProblems[0].name, "Premature completion without test pass");
+        assert.strictEqual(poProblems[0].attempts.length, 0);
+
+        // 4. Full SIM: keeps evolved specs + complete attempt history + shift advisories
+        const fullSim = sourceHarness.continueHarness({
+            mode: SIM_TRANSFER_MODES.FULL_SIM,
+            benchmark: "TB4",
+            policyModel: "gemini-3.8-flash"
+        });
+        const fullProblems = fullSim.getSim().toJSON().problems;
+        assert.strictEqual(fullProblems.length, 1);
+        assert.strictEqual(fullProblems[0].attempts.length, 1);
+        assert.deepStrictEqual(fullProblems[0].attempts[0].missed, ["tb_19"]);
+
+        const compiled = fullSim.getSim().compileOptimizerPrompt({
+            targetDomain: "coding",
+            targetBenchmark: "TB4",
+            targetPolicyModel: "gemini-3.8-flash"
+        });
+        assert.strictEqual(compiled.benchmarkShift, true);
+        assert.strictEqual(compiled.modelShift, true);
+        assert.ok(compiled.prompt.includes("BENCHMARK_SHIFT_DETECTED"));
+        assert.ok(compiled.prompt.includes("MODEL_SHIFT_DETECTED"));
+        assert.ok(compiled.prompt.includes('"tb_19"'), "Prompt must retain untruncated missed predictions");
     });
 
     // =========================================================================
