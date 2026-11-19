@@ -102,6 +102,57 @@ describe('@krusch/toolkit/easi — Sandboxed Chrome MCP & Small-Model Policy Flo
         await client.close();
     });
 
+    it('keeps event loop refd during in-flight top-level await stdio RPCs and unrefs when idle', () => {
+        const __dirname = path.dirname(fileURLToPath(import.meta.url));
+        const easiUrl = new URL('./easi.js', import.meta.url).href;
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'easi-ref-'));
+        try {
+            const bridgePath = path.join(tmpDir, 'mock-bridge.mjs');
+            const callerPath = path.join(tmpDir, 'caller.mjs');
+            fs.writeFileSync(
+                bridgePath,
+                [
+                    "import readline from 'node:readline';",
+                    "const rl = readline.createInterface({ input: process.stdin });",
+                    "rl.on('line', (line) => {",
+                    "  if (!line.trim()) return;",
+                    "  const msg = JSON.parse(line);",
+                    "  if (msg.id === undefined) return;",
+                    "  setTimeout(() => {",
+                    "    const res = msg.method === 'initialize'",
+                    "      ? { protocolVersion: '2025-06-18' }",
+                    "      : { isError: false, structuredContent: { sessions: [{ id: 'live-1' }] }, content: [] };",
+                    "    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: res }) + '\\n');",
+                    "  }, 60);",
+                    "});"
+                ].join('\n')
+            );
+            fs.writeFileSync(
+                callerPath,
+                [
+                    `import { createEasiClient } from ${JSON.stringify(easiUrl)};`,
+                    "const client = createEasiClient({",
+                    `  command: ${JSON.stringify(process.execPath)},`,
+                    `  args: [${JSON.stringify(bridgePath)}],`,
+                    "  autoMock: false",
+                    "});",
+                    "const res = await client.call('list_sessions', {});",
+                    "if (!res.ok || res.structured?.sessions?.[0]?.id !== 'live-1') process.exit(2);",
+                    "process.stdout.write(JSON.stringify(res.structured));"
+                ].join('\n')
+            );
+
+            const out = execFileSync(process.execPath, [callerPath], {
+                cwd: __dirname,
+                encoding: 'utf8',
+                timeout: 5000
+            });
+            assert.deepEqual(JSON.parse(out), { sessions: [{ id: 'live-1' }] });
+        } finally {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
+    });
+
     it('supports HTTP /mcp JSON-RPC and SSE text/event-stream responses with Mcp-Session-Id', async () => {
         const requests = [];
         const client = createEasiClient({
@@ -305,10 +356,14 @@ describe('@krusch/toolkit/easi — Sandboxed Chrome MCP & Small-Model Policy Flo
             goal: 'Click Write article on the LinkedIn feed.',
             observation: obs,
             decisionLog,
-            chatJsonFn: async (_sys, _usr, cfg) => {
+            chatJsonFn: async (_sys, usr, cfg) => {
+                assert.equal(usr.includes('\n'), false, 'userPrompt must be single-line compact JSON');
                 attempts += 1;
                 if (attempts === 1) {
                     throw new Error(`tier 0 ${cfg.model} busy`);
+                }
+                if (attempts === 2) {
+                    return { response: "I'm sorry, I cannot assist with that." };
                 }
                 return {
                     action: 'click_token',
@@ -320,9 +375,9 @@ describe('@krusch/toolkit/easi — Sandboxed Chrome MCP & Small-Model Policy Flo
             }
         });
 
-        assert.equal(attempts, 2);
-        assert.equal(navOut.tierIndex, 1);
-        assert.equal(navOut.model, 'qwen2.5-coder:7b');
+        assert.equal(attempts, 3);
+        assert.equal(navOut.tierIndex, 2);
+        assert.equal(navOut.model, 'gemma4:e4b');
         assert.equal(navOut.decision.element_token, 'el:10');
         assert.equal(decisionLog.length, 1);
     });

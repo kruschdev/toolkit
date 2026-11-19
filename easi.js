@@ -23,7 +23,11 @@ export const DEFAULT_EASI_WATCH_BASE = 'https://localhost:9443';
 export const DEFAULT_CHROME_OMNIBOX_MIN_Y = 82;
 
 export const DEFAULT_EDITOR_TAIL_SELECTOR =
-    "[data-contents='true'] > div:nth-last-child(-n+8), .ProseMirror > *:nth-last-child(-n+8), .ql-editor > *:nth-last-child(-n+8), [contenteditable='true'] > *:nth-last-child(-n+8), [contenteditable='true']";
+    "[data-contents='true'] > div:nth-last-child(-n+8), .ProseMirror > *:nth-last-child(-n+8), .ProseMirror ul > li:nth-last-child(-n+8), .ProseMirror ol > li:nth-last-child(-n+8), .ql-editor > *:nth-last-child(-n+8), [contenteditable='true'] > *:nth-last-child(-n+8), [contenteditable='true']";
+
+const VALID_NAVIGATOR_ACTIONS = Object.freeze(
+    new Set(['click_token', 'click_xy', 'goal_reached', 'wait', 'blocked'])
+);
 
 export const MUTATING_EASI_TOOLS = Object.freeze(
     new Set([
@@ -401,6 +405,15 @@ export function createEasiClient(options = {}) {
     let mcpHttpSessionId = null;
     const pendingStdio = new Map();
 
+    function syncStdioRefState(proc = stdioProc) {
+        if (!proc || options.unrefProcess === false) return;
+        const toggle = pendingStdio.size > 0 ? 'ref' : 'unref';
+        if (typeof proc[toggle] === 'function') proc[toggle]();
+        if (proc.stdout && typeof proc.stdout[toggle] === 'function') proc.stdout[toggle]();
+        if (proc.stderr && typeof proc.stderr[toggle] === 'function') proc.stderr[toggle]();
+        if (proc.stdin && typeof proc.stdin[toggle] === 'function') proc.stdin[toggle]();
+    }
+
     function rejectAllPendingStdio(reason) {
         for (const [id, entry] of pendingStdio.entries()) {
             pendingStdio.delete(id);
@@ -410,6 +423,7 @@ export function createEasiClient(options = {}) {
                 error: reason || stderrRing.trim() || 'easi.run stdio MCP stream closed unexpectedly.'
             });
         }
+        syncStdioRefState();
     }
 
     function teardownStdio() {
@@ -439,13 +453,14 @@ export function createEasiClient(options = {}) {
             const timer = setTimeout(() => {
                 if (!pendingStdio.has(reqId)) return;
                 pendingStdio.delete(reqId);
+                syncStdioRefState(proc);
                 resolve({
                     ok: false,
                     timedOut: true,
                     error: `Timed out after ${timeoutMs}ms waiting for easi.run MCP ${method}.`
                 });
             }, timeoutMs);
-            if (options.unrefTimers !== false && typeof timer.unref === 'function') {
+            if (options.unrefTimers === true && typeof timer.unref === 'function') {
                 timer.unref();
             }
 
@@ -453,12 +468,14 @@ export function createEasiClient(options = {}) {
                 timer,
                 resolve: (rawReply) => resolve(rawReply)
             });
+            syncStdioRefState(proc);
 
             try {
                 proc.stdin.write(line);
             } catch (err) {
                 pendingStdio.delete(reqId);
                 clearTimeout(timer);
+                syncStdioRefState(proc);
                 resolve({ ok: false, error: err.message });
             }
         });
@@ -473,12 +490,7 @@ export function createEasiClient(options = {}) {
             const child = spawnFn(command, commandArgs, {
                 stdio: ['pipe', 'pipe', 'pipe']
             });
-            if (options.unrefProcess !== false && typeof child.unref === 'function') {
-                child.unref();
-                if (child.stdout && typeof child.stdout.unref === 'function') child.stdout.unref();
-                if (child.stderr && typeof child.stderr.unref === 'function') child.stderr.unref();
-                if (child.stdin && typeof child.stdin.unref === 'function') child.stdin.unref();
-            }
+            syncStdioRefState(child);
             stdioProc = child;
             stdoutRemainder = '';
             stderrRing = '';
@@ -496,6 +508,7 @@ export function createEasiClient(options = {}) {
                             const entry = pendingStdio.get(parsed.id);
                             pendingStdio.delete(parsed.id);
                             clearTimeout(entry.timer);
+                            syncStdioRefState(child);
                             entry.resolve({ ok: true, rpc: parsed });
                         }
                     } catch {
@@ -654,7 +667,7 @@ export function createEasiClient(options = {}) {
         if (mojoKeyDrainActive) {
             if (toolName === 'get_window_state') {
                 throw createPolicyError(
-                    'POLICY_FLOOR_BLOCK: get_window_state is forbidden while keys are draining in Chrome Mojo queue',
+                    'POLICY_FLOOR_BLOCK: get_window_state is forbidden while keys are draining in Chrome Mojo queue (returns stale pre-drain AT-SPI state; poll inspect_page instead)',
                     { toolName }
                 );
             }
@@ -666,7 +679,7 @@ export function createEasiClient(options = {}) {
             }
             if (toolName === 'type_text' && toolArgs?.arguments?.element_token) {
                 throw createPolicyError(
-                    'POLICY_FLOOR_BLOCK: type_text element_token is forbidden during contenteditable Mojo key drain (causes Blink GrabFocus caret reset)',
+                    'POLICY_FLOOR_BLOCK: type_text element_token is forbidden during contenteditable Mojo key drain (non-entry section/paragraph tokens fail AT-SPI GrabFocus)',
                     { toolName }
                 );
             }
@@ -970,17 +983,28 @@ export async function captureCompactUiState(client, session, pid, windowId, opti
     const domElements = (domRes.structured?.elements || [])
         .filter((e) => e.shown !== false)
         .slice(0, domLimit)
-        .map((e) => ({
-            tag: e.tag,
-            text: String(e.text || '').trim().slice(0, 100),
-            ariaLabel: e.attributes?.['aria-label'] || undefined,
-            className: String(e.attributes?.class || '').slice(0, 80) || undefined,
-            testid: e.attributes?.['data-testid'] || undefined,
-            href: e.attributes?.href || undefined,
-            role: e.attributes?.role || undefined,
-            contenteditable: e.attributes?.contenteditable || undefined,
-            placeholder: e.attributes?.placeholder || e.attributes?.['data-placeholder'] || undefined
-        }));
+        .map((e) => {
+            const rawHref = String(e.attributes?.href || '').trim();
+            const safeHref =
+                rawHref && !/^(?:data|javascript|blob):/i.test(rawHref)
+                    ? rawHref.slice(0, 160)
+                    : undefined;
+            const rawAria = String(e.attributes?.['aria-label'] || '').trim();
+            const rawPlaceholder = String(
+                e.attributes?.placeholder || e.attributes?.['data-placeholder'] || ''
+            ).trim();
+            return {
+                tag: e.tag,
+                text: String(e.text || '').trim().slice(0, 100),
+                ariaLabel: rawAria ? rawAria.slice(0, 120) : undefined,
+                className: String(e.attributes?.class || '').slice(0, 80) || undefined,
+                testid: e.attributes?.['data-testid'] || undefined,
+                href: safeHref,
+                role: e.attributes?.role || undefined,
+                contenteditable: e.attributes?.contenteditable || undefined,
+                placeholder: rawPlaceholder ? rawPlaceholder.slice(0, 80) : undefined
+            };
+        });
 
     return {
         url: domRes.structured?.url || '',
@@ -1031,18 +1055,23 @@ export async function stepSmallModelNavigator(options = {}) {
         ...numberedExtra
     ].join('\n');
 
-    const userPrompt = JSON.stringify(
-        {
-            stage,
-            goal,
-            url: observation.url || '',
-            pageTitle: observation.pageTitle || '',
-            domElements: observation.domElements || [],
-            axElements: observation.safeElements || []
-        },
-        null,
-        2
-    );
+    const compactAx = (observation.safeElements || []).map((el) => {
+        const entry = { token: el.token, role: el.role };
+        if (el.label) entry.label = el.label;
+        if (el.value) entry.value = el.value;
+        if (el.enabled === false) entry.enabled = false;
+        if (el.frame) entry.frame = el.frame;
+        return entry;
+    });
+
+    const userPrompt = JSON.stringify({
+        stage,
+        goal,
+        url: observation.url || '',
+        pageTitle: String(observation.pageTitle || '').slice(0, 140),
+        domElements: observation.domElements || [],
+        axElements: compactAx
+    });
 
     const safeStart = Math.max(0, Math.min(Number(startTierIndex || 0), Math.max(0, tiers.length - 1)));
     const candidates = llmConfig.explicitOverride
@@ -1059,7 +1088,7 @@ export async function stepSmallModelNavigator(options = {}) {
         const tier = candidates[i];
         const startedAt = Date.now();
         try {
-            decision = await chatJsonFn(
+            const candidateDecision = await chatJsonFn(
                 systemPrompt,
                 userPrompt,
                 {
@@ -1073,6 +1102,25 @@ export async function stepSmallModelNavigator(options = {}) {
                     maxTokens: llmConfig.maxTokens ?? 500
                 }
             );
+            if (
+                !candidateDecision ||
+                typeof candidateDecision !== 'object' ||
+                !VALID_NAVIGATOR_ACTIONS.has(candidateDecision.action)
+            ) {
+                throw new Error(
+                    `Invalid navigator decision action=${JSON.stringify(candidateDecision?.action)}: ${JSON.stringify(candidateDecision).slice(0, 140)}`
+                );
+            }
+            if (candidateDecision.action === 'click_token' && !candidateDecision.element_token) {
+                throw new Error('Navigator returned click_token without element_token');
+            }
+            if (
+                candidateDecision.action === 'click_xy' &&
+                (!Number.isFinite(candidateDecision.x) || !Number.isFinite(candidateDecision.y))
+            ) {
+                throw new Error('Navigator returned click_xy without numeric x,y');
+            }
+            decision = candidateDecision;
             elapsedMs = Date.now() - startedAt;
             usedModel = tier.model;
             if (!llmConfig.explicitOverride && i > 0) {
@@ -1080,6 +1128,7 @@ export async function stepSmallModelNavigator(options = {}) {
             }
             break;
         } catch (err) {
+            decision = null;
             lastErr = err;
             if (typeof onTierFallback === 'function') {
                 onTierFallback({ tier, error: err, nextTier: candidates[i + 1] || null });
@@ -1193,7 +1242,7 @@ export async function executeValidatedUiDecision(client, params = {}) {
 
 /**
  * Read the trailing blocks of a rich-text `contenteditable` editor (X Draft.js, LinkedIn
- * ProseMirror/Quill, or generic `[contenteditable='true']`) without triggering AT-SPI focus shifts
+ * ProseMirror/Quill, or generic `[contenteditable='true']`) without reading stale mid-drain AT-SPI trees
  * and without hitting `inspect_page`'s 2,000-character single-element cap.
  *
  * Returns `{ busy: true }` while Chrome's Blink renderer is still busy draining Mojo keys.
