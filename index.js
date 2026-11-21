@@ -17,7 +17,9 @@ export {
     resolveMaxOutputTokens,
     resolveGeminiToolConfig,
     buildGeminiPayload,
-    extractGeminiTextParts
+    extractGeminiTextParts,
+    scoreThreeChairDifficulty,
+    createThreeChairCascadeRouter
 } from './llm.js';
 
 // JSON Parsing
@@ -365,6 +367,7 @@ export {
 // Lego Multi-Tier LLM Cascade, Single-Flight Circuit Breaker & Burst Probe (@krusch/toolkit/cascade)
 export {
     DEFAULT_FLEET_CASCADE_TIERS,
+    THREE_CHAIR_BANDIT_TIERS,
     createTierCircuitBreaker,
     selectCascadeTier,
     probeBurstEndpoint,
@@ -391,10 +394,16 @@ export {
 // Turn-0 Grounded, Scale-Aware, Low-Tool-Call Harness Bricks (@krusch/toolkit/grounded-harness)
 export {
     SCALE_TIERS,
+    GEMINI_TOOL_RETRIEVAL_MODELS,
     inferModelScaleMetadata,
     resolveScaleProfile,
     buildScaleAwareDirective,
     measureToolSchemaSavings,
+    isGeminiToolRetrievalSupported,
+    resolveAutoPinnedToolNames,
+    deriveToolShortDescription,
+    buildGeminiInteractionsTools,
+    validateGeminiStatelessToolHistory,
     createToolBudgetGate,
     createDeltaContextTracker,
     buildSafeGeminiToolConfig,

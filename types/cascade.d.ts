@@ -7,6 +7,9 @@ export type CascadeProvider = 'ollama' | 'gemini' | 'openai' | 'xai' | (string &
 export type CascadeTierId =
     | 'L1_FAST'
     | 'L2_HEAVY_MOE'
+    | 'L1_THIRD_CHAIR_FAST'
+    | 'L2_SECOND_CHAIR_CODER'
+    | 'L2_FIRST_CHAIR_INKLING'
     | 'L2_5_COLAB_BURST'
     | 'L3_FRONTIER_ARGON'
     | (string & {});
@@ -178,6 +181,8 @@ export interface ExecuteWithCascadeErrorDetails {
 }
 
 export declare const DEFAULT_FLEET_CASCADE_TIERS: readonly CascadeTierDescriptor[];
+
+export declare const THREE_CHAIR_BANDIT_TIERS: readonly CascadeTierDescriptor[];
 
 export declare function createTierCircuitBreaker(
     options?: CreateTierCircuitBreakerOptions

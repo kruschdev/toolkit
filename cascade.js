@@ -141,6 +141,91 @@ export const DEFAULT_FLEET_CASCADE_TIERS = Object.freeze([
 ]);
 
 /**
+ * Sovereign 3-Chair All-VRAM Bandit Cascade Descriptors (`INV-LEGO-19`):
+ *   1. 3rd Chair (`OLLAMA_THIRD_CHAIR_URL`): `gemma4:e2b` (`108.4 tok/s`, Easy `<= 0.35`)
+ *   2. 2nd Chair (`LLAMA_SECOND_CHAIR_URL`): `qwen3-coder-30b-moe:latest` (`82.9 tok/s`, Medium `<= 0.68`)
+ *   3. 1st Chair (`LLAMA_FIRST_CHAIR_URL`): `inkling-2-mini:ud-iq4_xs-dspark` (`38.0 tok/s`, `32K` ctx, Hard `<= 0.92`)
+ *   4. Optional Burst (`OLLAMA_BURST_URL`) & Frontier (`gemini-4-argon`)
+ */
+export const THREE_CHAIR_BANDIT_TIERS = Object.freeze([
+    freezeTierDescriptor({
+        id: 'L1_THIRD_CHAIR_FAST',
+        rank: 1,
+        provider: 'ollama',
+        defaultModel: 'gemma4:e2b',
+        envUrlKey: 'OLLAMA_THIRD_CHAIR_URL',
+        defaultUrl: 'http://127.0.0.1:11434',
+        maxContextTokens: 16_384,
+        supportsTools: true,
+        supportsVision: false,
+        isBurst: false,
+        isFrontier: false,
+        maxComplexity: 0.35,
+        capabilities: ['chat', 'tools', 'triage'],
+    }),
+    freezeTierDescriptor({
+        id: 'L2_SECOND_CHAIR_CODER',
+        rank: 2,
+        provider: 'ollama',
+        defaultModel: 'qwen3-coder-30b-moe:latest',
+        envUrlKey: 'LLAMA_SECOND_CHAIR_URL',
+        defaultUrl: 'http://127.0.0.1:18081',
+        maxContextTokens: 16_384,
+        supportsTools: true,
+        supportsVision: false,
+        isBurst: false,
+        isFrontier: false,
+        maxComplexity: 0.68,
+        capabilities: ['chat', 'tools', 'code'],
+    }),
+    freezeTierDescriptor({
+        id: 'L2_FIRST_CHAIR_INKLING',
+        rank: 3,
+        provider: 'ollama',
+        defaultModel: 'inkling-2-mini:ud-iq4_xs-dspark',
+        envUrlKey: 'LLAMA_FIRST_CHAIR_URL',
+        defaultUrl: 'http://127.0.0.1:18080',
+        maxContextTokens: 32_768,
+        supportsTools: true,
+        supportsVision: false,
+        isBurst: false,
+        isFrontier: false,
+        maxComplexity: 0.92,
+        capabilities: ['chat', 'tools', 'code', 'reasoning'],
+    }),
+    freezeTierDescriptor({
+        id: 'L2_5_COLAB_BURST',
+        rank: 4,
+        provider: 'ollama',
+        defaultModel: 'gpt-oss:120b',
+        envUrlKey: 'COLAB_BURST_URL',
+        defaultUrl: 'http://127.0.0.1:11435',
+        maxContextTokens: 131_072,
+        supportsTools: true,
+        supportsVision: false,
+        isBurst: true,
+        isFrontier: false,
+        maxComplexity: 0.96,
+        capabilities: ['chat', 'tools', 'reasoning', 'burst'],
+    }),
+    freezeTierDescriptor({
+        id: 'L3_FRONTIER_ARGON',
+        rank: 5,
+        provider: 'gemini',
+        defaultModel: 'gemini-4-argon',
+        envUrlKey: 'GEMINI_API_BASE_URL',
+        defaultUrl: 'https://generativelanguage.googleapis.com',
+        maxContextTokens: 1_000_000,
+        supportsTools: true,
+        supportsVision: true,
+        isBurst: false,
+        isFrontier: true,
+        maxComplexity: 1.0,
+        capabilities: ['chat', 'tools', 'vision', 'reasoning', 'frontier'],
+    }),
+]);
+
+/**
  * Normalize a tier identifier into a bounded, prototype-safe key.
  *
  * @param {unknown} tierId - Candidate tier ID
@@ -604,8 +689,9 @@ export async function probeBurstEndpoint(
         );
     }
 
-    const normalizedBaseUrl = rawUrl.replace(/\/+$/, '').replace(/\/api\/tags$/i, '');
+    const normalizedBaseUrl = rawUrl.replace(/\/+$/, '').replace(/\/(?:api\/tags|v1\/models)$/i, '');
     const tagsUrl = `${normalizedBaseUrl}/api/tags`;
+    const openAiModelsUrl = `${normalizedBaseUrl}/v1/models`;
 
     if (typeof fetchImpl !== 'function') {
         return errorEnvelope(
@@ -665,11 +751,22 @@ export async function probeBurstEndpoint(
                 headers: { Accept: 'application/json' },
                 signal: controller.signal,
             });
-            if (!res || !res.ok) {
-                return { okHttp: false, status: res?.status ?? 0, payload: null };
+            if (res && res.ok) {
+                const json = await res.json();
+                return { okHttp: true, status: res.status, payload: json };
             }
-            const json = await res.json();
-            return { okHttp: true, status: res.status, payload: json };
+            if (res && res.status === 404) {
+                const v1Res = await fetchImpl(openAiModelsUrl, {
+                    method: 'GET',
+                    headers: { Accept: 'application/json' },
+                    signal: controller.signal,
+                });
+                if (v1Res && v1Res.ok) {
+                    const v1Json = await v1Res.json();
+                    return { okHttp: true, status: v1Res.status, payload: v1Json };
+                }
+            }
+            return { okHttp: false, status: res?.status ?? 0, payload: null };
         })();
         probeOperation.catch(() => {});
 
@@ -690,12 +787,16 @@ export async function probeBurstEndpoint(
             );
         }
 
-        const rawModels = Array.isArray(payload?.models) ? payload.models : [];
+        const rawModels = Array.isArray(payload?.models)
+            ? payload.models
+            : Array.isArray(payload?.data)
+              ? payload.data
+              : [];
         const models = rawModels
             .map((entry) =>
                 typeof entry === 'string'
                     ? entry.trim()
-                    : String(entry?.name || entry?.model || '').trim()
+                    : String(entry?.name || entry?.model || entry?.id || '').trim()
             )
             .filter(Boolean);
 

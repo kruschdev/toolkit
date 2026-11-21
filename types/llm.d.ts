@@ -1,4 +1,4 @@
-export type LLMProvider = 'gemini' | 'openai' | 'openrouter' | 'xai' | 'grok' | 'ollama' | (string & {});
+export type LLMProvider = 'gemini' | 'three-chair' | 'cascade' | 'openai' | 'openrouter' | 'xai' | 'grok' | 'ollama' | (string & {});
 export type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high';
 
 export interface LLMChatMessage {
@@ -67,6 +67,13 @@ export interface ChatFullResponse {
     hops?: number;
     tool_calls?: unknown[];
     groundingMetadata?: Record<string, unknown> | null;
+    routedTierId?: string;
+    routedModel?: string;
+    routedEndpoint?: string;
+    complexityScore?: number;
+    specialistRole?: string;
+    attemptCount?: number;
+    attempts?: unknown[];
     usage?: {
         initialPromptTokens?: number;
         inputTokens?: number;
@@ -144,3 +151,21 @@ export declare function resolveModelConfig(
     taskName: string,
     config?: Record<string, any>
 ): ResolvedModelConfig;
+
+export declare function scoreThreeChairDifficulty(
+    promptText?: string,
+    hints?: { complexityScore?: number; role?: string }
+): Promise<{ complexityScore: number; role: string }>;
+
+export declare function createThreeChairCascadeRouter(
+    routerOptions?: Record<string, any>
+): {
+    tiers: readonly unknown[];
+    breaker: unknown;
+    routeAndExecute(
+        systemPrompt: string,
+        userMessage: string,
+        config?: Record<string, any>,
+        options?: ChatOptions
+    ): Promise<ChatFullResponse>;
+};

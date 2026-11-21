@@ -107,15 +107,155 @@ export interface DeferredToolBridgeInstance {
 export interface ToolBudgetGateOptions {
     tools?: ReadonlyArray<ToolDefinitionLike>;
     pinnedToolNames?: ReadonlyArray<string>;
+    referenceTexts?: ReadonlyArray<string>;
+    systemPrompt?: string;
     deferThreshold?: number;
     forceDefer?: boolean;
     searchTopK?: number;
     dispatcher?: ToolDispatcherFn;
 }
 
+export type GeminiToolRetrievalMode = 'server' | 'client' | 'static';
+
+export interface AutoPinnedToolNamesResult {
+    pinnedToolNames: string[];
+    autoPinnedToolNames: string[];
+}
+
+export interface DeriveToolShortDescriptionOptions {
+    maxChars?: number;
+    prefixComponent?: boolean;
+}
+
+export interface GeminiRemoteMcpServerConfig {
+    name: string;
+    url: string;
+    deferLoading?: boolean;
+    defer_loading?: boolean;
+}
+
+export interface GeminiFunctionDeclarationEntry {
+    type: 'function';
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+    defer_loading?: boolean;
+    short_description?: string;
+}
+
+export interface GeminiServerToolSearchEntry {
+    type: 'tool_search';
+    execution?: 'server';
+    name?: never;
+    description?: never;
+    parameters?: never;
+}
+
+export interface GeminiClientToolSearchEntry {
+    type: 'tool_search';
+    execution: 'client';
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+}
+
+export type GeminiToolSearchEntry =
+    | GeminiServerToolSearchEntry
+    | GeminiClientToolSearchEntry;
+
+export interface GeminiMcpServerToolEntry {
+    type: 'mcp_server';
+    name: string;
+    url: string;
+    defer_loading?: boolean;
+}
+
+export type GeminiInteractionsToolEntry =
+    | GeminiFunctionDeclarationEntry
+    | GeminiToolSearchEntry
+    | GeminiMcpServerToolEntry;
+
+export interface GeminiClientToolSearchCallInput {
+    id?: string;
+    call_id?: string;
+    callId?: string;
+    type?: string;
+    name?: string;
+    arguments?: Record<string, unknown>;
+    args?: Record<string, unknown>;
+    query?: string;
+    namespace?: string;
+    component?: string;
+    limit?: number;
+    includePinned?: boolean;
+}
+
+export interface GeminiClientToolSearchResultStep {
+    type: 'function_result';
+    name: string;
+    call_id: string;
+    result: Array<GeminiFunctionDeclarationEntry | { type: 'text'; text: string }>;
+}
+
+export interface BuildGeminiInteractionsToolsOptions {
+    mode?: 'server' | 'client';
+    model?: string;
+    strictModelCheck?: boolean;
+    pinnedToolNames?: ReadonlyArray<string>;
+    referenceTexts?: ReadonlyArray<string>;
+    systemPrompt?: string;
+    deferThreshold?: number;
+    forceDefer?: boolean;
+    mcpServers?: ReadonlyArray<GeminiRemoteMcpServerConfig>;
+    clientSearchName?: string;
+    clientSearchDescription?: string;
+    searchTopK?: number;
+    includeShortDescription?: boolean;
+    maxShortDescriptionChars?: number;
+    prefixComponent?: boolean;
+}
+
+export interface GeminiInteractionsToolCompilation {
+    mode: GeminiToolRetrievalMode;
+    deferred: boolean;
+    modelSupported: boolean;
+    tools: GeminiInteractionsToolEntry[];
+    pinnedToolNames: string[];
+    autoPinnedToolNames: string[];
+    eagerToolNames: string[];
+    deferredToolNames: string[];
+    deferredMcpServerNames: string[];
+    systemInstructionHint: string;
+    resolveClientSearchResult: (
+        callStepOrArgs?: GeminiClientToolSearchCallInput
+    ) => GeminiClientToolSearchResultStep;
+}
+
+export type StatelessToolHistoryDefectCode =
+    | 'MISSING_THOUGHT_SIGNATURE'
+    | 'ORPHANED_TOOL_SEARCH_RESULT'
+    | 'MISSING_TOOL_SEARCH_RESULT'
+    | 'MISSING_CIRCULATED_TOOL_CONTEXT';
+
+export interface StatelessToolHistoryDefect {
+    code: StatelessToolHistoryDefectCode;
+    stepIndex: number;
+    stepType: string;
+    toolName: string | null;
+    detail: string;
+}
+
+export interface StatelessToolHistoryValidationResult {
+    valid: boolean;
+    loadedToolNames: string[];
+    defects: StatelessToolHistoryDefect[];
+}
+
 export interface ToolBudgetGate {
     deferred: boolean;
     exposedTools: ToolDefinitionLike[];
+    pinnedToolNames: string[];
+    autoPinnedToolNames: string[];
     savings: ToolSchemaSavings;
     bridge: DeferredToolBridgeInstance | null;
     invokeMetaTool: (
@@ -123,6 +263,9 @@ export interface ToolBudgetGate {
         args?: Record<string, unknown>,
         overrideDispatcher?: ToolDispatcherFn
     ) => Promise<Record<string, unknown>>;
+    toGeminiInteractionsTools: (
+        geminiOptions?: BuildGeminiInteractionsToolsOptions
+    ) => GeminiInteractionsToolCompilation;
 }
 
 export interface DeltaContextTrackerOptions {
@@ -347,6 +490,7 @@ export interface GroundedHarnessLoopOptions extends ResolveScaleProfileOptions {
     fileDigests?: Record<string, string>;
     tools?: ReadonlyArray<ToolDefinitionLike>;
     pinnedToolNames?: ReadonlyArray<string>;
+    referenceTexts?: ReadonlyArray<string>;
     deferThreshold?: number;
     forceDefer?: boolean;
     searchTopK?: number;
@@ -623,6 +767,40 @@ export declare function resolveScaleProfile(
 export declare function buildScaleAwareDirective(
     profile?: Partial<ScaleProfile> | null
 ): string;
+
+export declare const GEMINI_TOOL_RETRIEVAL_MODELS: readonly string[];
+
+export declare function isGeminiToolRetrievalSupported(
+    modelId?: string
+): boolean;
+
+export declare function resolveAutoPinnedToolNames(
+    tools?: ReadonlyArray<ToolDefinitionLike>,
+    options?: {
+        pinnedToolNames?: ReadonlyArray<string>;
+        referenceTexts?: ReadonlyArray<string>;
+        systemPrompt?: string;
+    }
+): AutoPinnedToolNamesResult;
+
+export declare function deriveToolShortDescription(
+    tool?: ToolDefinitionLike,
+    options?: DeriveToolShortDescriptionOptions
+): string;
+
+export declare function buildGeminiInteractionsTools(
+    tools?: ReadonlyArray<ToolDefinitionLike>,
+    options?: BuildGeminiInteractionsToolsOptions
+): GeminiInteractionsToolCompilation;
+
+export declare function validateGeminiStatelessToolHistory(
+    steps?: ReadonlyArray<Record<string, unknown>>,
+    options?: {
+        deferredToolNames?: ReadonlyArray<string>;
+        deferredMcpServerNames?: ReadonlyArray<string>;
+        requireFunctionCallSignature?: boolean;
+    }
+): StatelessToolHistoryValidationResult;
 
 export declare function measureToolSchemaSavings(
     allTools?: ReadonlyArray<ToolDefinitionLike>,

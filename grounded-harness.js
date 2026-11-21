@@ -451,29 +451,666 @@ export function measureToolSchemaSavings(allTools = [], exposedTools = []) {
 }
 
 /**
+ * Canonical model prefixes supporting Gemini Interactions API (`v1beta/interactions`) Tool Retrieval.
+ */
+export const GEMINI_TOOL_RETRIEVAL_MODELS = Object.freeze([
+    'gemini-4-hydrogen',
+    'gemini-4-argon',
+    'gemini-3.8-flash',
+    'gemini-3.6-flash'
+]);
+
+/**
+ * Determine whether a target model identifier supports Gemini `v1beta/interactions` Tool Retrieval
+ * (`tool_search` and `defer_loading`).
+ *
+ * @param {string} [modelId=''] - Model identifier.
+ * @returns {boolean}
+ */
+export function isGeminiToolRetrievalSupported(modelId = '') {
+    const clean = String(modelId ?? '')
+        .trim()
+        .toLowerCase()
+        .replace(/^(?:models|google|gemini)\//, '');
+    if (!clean) return false;
+    return /^gemini-4(?:-|$)/.test(clean) || /^gemini-3\.(?:6|8)-flash(?:-|$)/.test(clean);
+}
+
+function escapeRegExpLiteral(value) {
+    return String(value ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function extractToolIdentifier(tool) {
+    const raw = tool?.name ?? tool?.function?.name ?? '';
+    return typeof raw === 'string' ? raw.trim() : '';
+}
+
+/**
+ * Scan system instructions and reference texts to automatically pin any explicitly named tools
+ * alongside `pinnedToolNames`, preventing unsearched direct calls on deferred functions
+ * (`HTTP 400 Missing circulated context for functions`).
+ *
+ * @param {Array<object>} [tools=[]] - Full tool registry.
+ * @param {object} [options={}] - Pinning options (`pinnedToolNames`, `referenceTexts`, `systemPrompt`).
+ * @returns {{ pinnedToolNames: string[], autoPinnedToolNames: string[] }}
+ */
+export function resolveAutoPinnedToolNames(tools = [], options = {}) {
+    const safeTools = Array.isArray(tools) ? tools : [];
+    const safeOpts = options && typeof options === 'object' ? options : {};
+    const explicitList = Array.isArray(safeOpts.pinnedToolNames) ? safeOpts.pinnedToolNames : [];
+    const referenceList = Array.isArray(safeOpts.referenceTexts) ? safeOpts.referenceTexts : [];
+    const systemPrompt = typeof safeOpts.systemPrompt === 'string' ? safeOpts.systemPrompt : '';
+
+    const pinnedSet = new Set();
+    const orderedPinned = [];
+    for (const item of explicitList) {
+        const clean = typeof item === 'string' ? item.trim() : '';
+        if (clean && !pinnedSet.has(clean)) {
+            pinnedSet.add(clean);
+            orderedPinned.push(clean);
+        }
+    }
+
+    const corpusParts = [];
+    if (systemPrompt.trim().length > 0) corpusParts.push(systemPrompt);
+    for (const entry of referenceList) {
+        if (typeof entry === 'string' && entry.trim().length > 0) {
+            corpusParts.push(entry);
+        }
+    }
+
+    const autoPinnedToolNames = [];
+    if (corpusParts.length > 0 && safeTools.length > 0) {
+        const combinedCorpus = corpusParts.join('\n');
+        for (const tool of safeTools) {
+            const name = extractToolIdentifier(tool);
+            if (!name || pinnedSet.has(name)) continue;
+            const boundaryRe = new RegExp(`(?<![A-Za-z0-9_:-])${escapeRegExpLiteral(name)}(?![A-Za-z0-9_:-])`);
+            if (boundaryRe.test(combinedCorpus)) {
+                pinnedSet.add(name);
+                orderedPinned.push(name);
+                autoPinnedToolNames.push(name);
+            }
+        }
+    }
+
+    return {
+        pinnedToolNames: orderedPinned,
+        autoPinnedToolNames
+    };
+}
+
+/**
+ * Derive a compact (~20-26 token) single-sentence `short_description` for deferred tool retrieval,
+ * optionally prefixing `[component]` to disambiguate similar operations across services.
+ *
+ * @param {object} [tool={}] - Tool definition.
+ * @param {object} [options={}] - Formatting options (`maxChars`, `prefixComponent`).
+ * @returns {string}
+ */
+export function deriveToolShortDescription(tool = {}, options = {}) {
+    const safeTool = tool && typeof tool === 'object' ? tool : {};
+    const safeOpts = options && typeof options === 'object' ? options : {};
+    const maxChars = Number.isFinite(safeOpts.maxChars) && safeOpts.maxChars >= 24
+        ? Math.floor(safeOpts.maxChars)
+        : 110;
+    const prefixComponent = safeOpts.prefixComponent !== false;
+
+    const explicitShort = safeTool.short_description ?? safeTool.shortDescription;
+    let baseText = typeof explicitShort === 'string' && explicitShort.trim().length > 0
+        ? explicitShort.trim()
+        : String(
+            safeTool.description ??
+            safeTool.function?.description ??
+            safeTool.title ??
+            safeTool.annotations?.title ??
+            extractToolIdentifier(safeTool)
+        ).trim();
+
+    baseText = baseText.replace(/\s+/g, ' ');
+    if (!explicitShort) {
+        const sentenceMatch = baseText.match(/^(.+?[.!?])(?:\s|$)/);
+        if (sentenceMatch && sentenceMatch[1].length >= 12) {
+            baseText = sentenceMatch[1].trim();
+        }
+    }
+
+    const componentTag = String(
+        safeTool.component ?? safeTool.namespace ?? safeTool.service ?? safeTool.category ?? ''
+    ).trim();
+    if (
+        prefixComponent &&
+        componentTag.length > 0 &&
+        !baseText.toLowerCase().startsWith(`[${componentTag.toLowerCase()}]`) &&
+        !baseText.toLowerCase().startsWith(`${componentTag.toLowerCase()}:`)
+    ) {
+        baseText = `[${componentTag}] ${baseText}`;
+    }
+
+    if (baseText.length <= maxChars) {
+        return baseText;
+    }
+
+    const budget = Math.max(16, maxChars - 3);
+    const sliced = baseText.slice(0, budget);
+    const lastSpace = sliced.lastIndexOf(' ');
+    const cleanSlice = lastSpace >= Math.floor(budget * 0.6) ? sliced.slice(0, lastSpace) : sliced;
+    return `${cleanSlice.replace(/[,:;.\s]+$/, '')}...`;
+}
+
+function deduplicateToolsByName(tools = []) {
+    if (!Array.isArray(tools) || tools.length === 0) return [];
+    const seen = new Set();
+    const deduped = [];
+    for (const tool of tools) {
+        const name = extractToolIdentifier(tool);
+        if (!name) continue;
+        if (seen.has(name)) continue;
+        seen.add(name);
+        deduped.push(tool);
+    }
+    return deduped;
+}
+
+function toGeminiFunctionObject(tool, {
+    deferLoading = false,
+    includeShortDescription = false,
+    maxShortDescriptionChars = 110,
+    prefixComponent = true
+} = {}) {
+    const name = extractToolIdentifier(tool);
+    const description = String(
+        tool?.description ?? tool?.function?.description ?? tool?.title ?? tool?.annotations?.title ?? ''
+    ).trim();
+    const rawParams = tool?.parameters ?? tool?.inputSchema ?? tool?.function?.parameters;
+    const parameters = rawParams && typeof rawParams === 'object' && !Array.isArray(rawParams)
+        ? {
+            ...rawParams,
+            ...(rawParams.properties && typeof rawParams.properties === 'object' && !Array.isArray(rawParams.properties)
+                ? { properties: { ...rawParams.properties } }
+                : {}),
+            ...(Array.isArray(rawParams.required) ? { required: [...rawParams.required] } : {})
+        }
+        : { type: 'object', properties: {} };
+
+    const decl = {
+        type: 'function',
+        name,
+        description,
+        parameters
+    };
+
+    if (deferLoading === true) {
+        decl.defer_loading = true;
+        if (includeShortDescription !== false) {
+            const shortDesc = deriveToolShortDescription(tool, {
+                maxChars: maxShortDescriptionChars,
+                prefixComponent
+            });
+            if (shortDesc && shortDesc !== description) {
+                decl.short_description = shortDesc;
+            }
+        }
+    }
+
+    return decl;
+}
+
+/**
+ * Compile a tool registry into a Gemini `v1beta/interactions` Tool Retrieval configuration
+ * supporting both server-side (`defer_loading: true` + `short_description`) and client-side
+ * (`execution: "client"` backed by weighted Okapi BM25) modes while guarding against HTTP 400 traps.
+ *
+ * @param {Array<object>} [tools=[]] - Full underlying tool definitions.
+ * @param {object} [options={}] - Retrieval compilation options.
+ * @returns {object}
+ */
+export function buildGeminiInteractionsTools(tools = [], options = {}) {
+    const safeTools = deduplicateToolsByName(tools);
+    const safeOpts = options && typeof options === 'object' ? options : {};
+    const mode = safeOpts.mode === 'client' ? 'client' : 'server';
+    const deferThreshold = Number.isFinite(safeOpts.deferThreshold) ? safeOpts.deferThreshold : 12;
+    const searchTopK = Number.isFinite(safeOpts.searchTopK) && safeOpts.searchTopK > 0
+        ? Math.floor(safeOpts.searchTopK)
+        : 5;
+    const maxShortDescriptionChars = Number.isFinite(safeOpts.maxShortDescriptionChars)
+        ? safeOpts.maxShortDescriptionChars
+        : 110;
+    const prefixComponent = safeOpts.prefixComponent !== false;
+    const strictModelCheck = safeOpts.strictModelCheck !== false;
+    const modelSupported = safeOpts.model
+        ? isGeminiToolRetrievalSupported(safeOpts.model)
+        : true;
+
+    const { pinnedToolNames: resolvedPinnedNames, autoPinnedToolNames } = resolveAutoPinnedToolNames(safeTools, {
+        pinnedToolNames: safeOpts.pinnedToolNames,
+        referenceTexts: safeOpts.referenceTexts,
+        systemPrompt: safeOpts.systemPrompt
+    });
+    const pinnedSet = new Set(resolvedPinnedNames);
+
+    const rawMcpServers = Array.isArray(safeOpts.mcpServers) ? safeOpts.mcpServers : [];
+    const seenMcpNames = new Set();
+    const validMcpServers = [];
+    for (const srv of rawMcpServers) {
+        if (!srv || typeof srv.name !== 'string' || typeof srv.url !== 'string') continue;
+        const cleanName = srv.name.trim();
+        const cleanUrl = srv.url.trim();
+        if (!cleanName || !cleanUrl || seenMcpNames.has(cleanName)) continue;
+        seenMcpNames.add(cleanName);
+        validMcpServers.push(srv);
+    }
+
+    const unpinnedTools = safeTools.filter((t) => !pinnedSet.has(extractToolIdentifier(t)));
+    const deferrableMcpCount = mode === 'server'
+        ? validMcpServers.filter((srv) => srv.deferLoading !== false && srv.defer_loading !== false).length
+        : 0;
+    const totalRegistrations = safeTools.length + validMcpServers.length;
+    const canUseRetrieval = !strictModelCheck || modelSupported;
+    const shouldDefer = Boolean(
+        canUseRetrieval &&
+        (unpinnedTools.length + deferrableMcpCount) > 0 &&
+        (safeOpts.forceDefer === true || totalRegistrations > deferThreshold)
+    );
+
+    const toolByName = new Map();
+    const namespaces = new Set();
+    for (const tool of safeTools) {
+        const name = extractToolIdentifier(tool);
+        toolByName.set(name, tool);
+        const ns = String(tool?.component ?? tool?.namespace ?? tool?.service ?? tool?.category ?? '').trim();
+        if (ns) namespaces.add(ns);
+    }
+
+    const bm25Bridge = createDeferredToolBridge(safeTools, {
+        pinnedToolNames: resolvedPinnedNames,
+        deferThreshold,
+        forceDefer: true,
+        defaultLimit: searchTopK
+    });
+
+    const clientSearchName = typeof safeOpts.clientSearchName === 'string' && safeOpts.clientSearchName.trim()
+        ? safeOpts.clientSearchName.trim()
+        : 'search_tool_registry';
+
+    function resolveClientSearchResult(callStepOrArgs = {}) {
+        const isStepEnvelope = Boolean(
+            callStepOrArgs &&
+            typeof callStepOrArgs === 'object' &&
+            ('arguments' in callStepOrArgs || 'call_id' in callStepOrArgs || callStepOrArgs.type === 'function_call')
+        );
+        const callId = String(callStepOrArgs?.id ?? callStepOrArgs?.call_id ?? callStepOrArgs?.callId ?? 'tsc_client_1');
+        const callName = String(callStepOrArgs?.name ?? clientSearchName).trim() || clientSearchName;
+        const rawArgs = isStepEnvelope
+            ? (callStepOrArgs.arguments ?? callStepOrArgs.args ?? {})
+            : callStepOrArgs;
+        const safeArgs = rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {};
+
+        const query = String(safeArgs.query ?? '').trim() || '*';
+        const requestedNamespace = String(safeArgs.namespace ?? safeArgs.component ?? '').trim().toLowerCase();
+        const limit = Number.isFinite(safeArgs.limit) && safeArgs.limit > 0
+            ? Math.floor(safeArgs.limit)
+            : searchTopK;
+
+        const searchPoolLimit = requestedNamespace ? Math.max(limit * 4, safeTools.length) : limit * 2;
+        const searchOut = bm25Bridge.search(query, searchPoolLimit);
+        const candidates = Array.isArray(searchOut?.data?.matches) ? searchOut.data.matches : [];
+
+        const matchedDeclarations = [];
+        for (const hit of candidates) {
+            if (matchedDeclarations.length >= limit) break;
+            const fullTool = toolByName.get(hit.name);
+            if (!fullTool) continue;
+            if (pinnedSet.has(hit.name) && safeArgs.includePinned !== true) continue;
+            if (requestedNamespace) {
+                const toolNs = String(
+                    fullTool.component ?? fullTool.namespace ?? fullTool.service ?? fullTool.category ?? ''
+                ).trim().toLowerCase();
+                const prefixHit = hit.name.toLowerCase().startsWith(`${requestedNamespace}_`) ||
+                    hit.name.toLowerCase().startsWith(`${requestedNamespace}:`);
+                if (toolNs !== requestedNamespace && !prefixHit) continue;
+            }
+            matchedDeclarations.push(toGeminiFunctionObject(fullTool, { deferLoading: false }));
+        }
+
+        if (matchedDeclarations.length === 0) {
+            const nsList = namespaces.size > 0
+                ? ` Available namespaces: ${Array.from(namespaces).sort().join(', ')}.`
+                : '';
+            return {
+                type: 'function_result',
+                name: callName,
+                call_id: callId,
+                result: [
+                    {
+                        type: 'text',
+                        text: `No deferred tools matched "${query}"${requestedNamespace ? ` in namespace "${requestedNamespace}"` : ''} across ${unpinnedTools.length} searchable tools.${nsList} Try broader capability keywords.`
+                    }
+                ]
+            };
+        }
+
+        return {
+            type: 'function_result',
+            name: callName,
+            call_id: callId,
+            result: matchedDeclarations
+        };
+    }
+
+    if (!shouldDefer) {
+        const staticTools = [
+            ...safeTools.map((t) => toGeminiFunctionObject(t, { deferLoading: false })),
+            ...validMcpServers.map((srv) => ({
+                type: 'mcp_server',
+                name: srv.name.trim(),
+                url: srv.url.trim()
+            }))
+        ];
+        return {
+            mode: 'static',
+            deferred: false,
+            modelSupported,
+            tools: staticTools,
+            pinnedToolNames: resolvedPinnedNames,
+            autoPinnedToolNames,
+            eagerToolNames: safeTools.map((t) => extractToolIdentifier(t)),
+            deferredToolNames: [],
+            deferredMcpServerNames: [],
+            systemInstructionHint: '',
+            resolveClientSearchResult
+        };
+    }
+
+    if (mode === 'client') {
+        const nsSummary = namespaces.size > 0
+            ? ` Available namespaces: ${Array.from(namespaces).sort().join(', ')}.`
+            : '';
+        const clientDescription = typeof safeOpts.clientSearchDescription === 'string' && safeOpts.clientSearchDescription.trim()
+            ? safeOpts.clientSearchDescription.trim()
+            : `Search ${unpinnedTools.length} specialized tools in the internal registry when loaded tools cannot complete the task.${nsSummary}`;
+
+        const eagerTools = safeTools
+            .filter((t) => pinnedSet.has(extractToolIdentifier(t)))
+            .map((t) => toGeminiFunctionObject(t, { deferLoading: false }));
+
+        const staticClientMcpEntries = validMcpServers.map((srv) => ({
+            type: 'mcp_server',
+            name: srv.name.trim(),
+            url: srv.url.trim()
+        }));
+
+        const clientTools = [
+            {
+                type: 'tool_search',
+                execution: 'client',
+                name: clientSearchName,
+                description: clientDescription,
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        query: {
+                            type: 'string',
+                            description: 'Tool name or capability keywords to search for.'
+                        },
+                        ...(namespaces.size > 0
+                            ? {
+                                namespace: {
+                                    type: 'string',
+                                    description: `Optional service/pillar filter (${Array.from(namespaces).sort().join(', ')}).`
+                                }
+                            }
+                            : {}),
+                        limit: {
+                            type: 'integer',
+                            description: 'Maximum number of matching tool schemas to return.'
+                        }
+                    },
+                    required: ['query']
+                }
+            },
+            ...eagerTools,
+            ...staticClientMcpEntries
+        ];
+
+        return {
+            mode: 'client',
+            deferred: true,
+            modelSupported,
+            tools: clientTools,
+            pinnedToolNames: resolvedPinnedNames,
+            autoPinnedToolNames,
+            eagerToolNames: eagerTools.map((t) => t.name),
+            deferredToolNames: unpinnedTools.map((t) => extractToolIdentifier(t)),
+            deferredMcpServerNames: [],
+            systemInstructionHint: `If none of your loaded tools can complete the task, call ${clientSearchName} to discover and load matching tool schemas.`,
+            resolveClientSearchResult
+        };
+    }
+
+    // Default: mode === 'server'
+    const eagerServerTools = safeTools
+        .filter((t) => pinnedSet.has(extractToolIdentifier(t)))
+        .map((t) => toGeminiFunctionObject(t, { deferLoading: false }));
+    const deferredServerTools = unpinnedTools.map((t) => toGeminiFunctionObject(t, {
+        deferLoading: true,
+        includeShortDescription: safeOpts.includeShortDescription !== false,
+        maxShortDescriptionChars,
+        prefixComponent
+    }));
+    const deferredMcpServerNames = [];
+    const mcpEntries = validMcpServers.map((srv) => {
+        const cleanSrvName = srv.name.trim();
+        const deferSrv = srv.deferLoading !== false && srv.defer_loading !== false;
+        if (deferSrv) {
+            deferredMcpServerNames.push(cleanSrvName);
+        }
+        return {
+            type: 'mcp_server',
+            name: cleanSrvName,
+            url: srv.url.trim(),
+            ...(deferSrv ? { defer_loading: true } : {})
+        };
+    });
+
+    return {
+        mode: 'server',
+        deferred: true,
+        modelSupported,
+        tools: [
+            { type: 'tool_search' },
+            ...eagerServerTools,
+            ...deferredServerTools,
+            ...mcpEntries
+        ],
+        pinnedToolNames: resolvedPinnedNames,
+        autoPinnedToolNames,
+        eagerToolNames: eagerServerTools.map((t) => t.name),
+        deferredToolNames: deferredServerTools.map((t) => t.name),
+        deferredMcpServerNames,
+        systemInstructionHint: 'If none of your loaded tools can complete the task, use tool search to find one.',
+        resolveClientSearchResult
+    };
+}
+
+/**
+ * Audit stateless (`store: false`) Gemini Interactions API `input` history steps prior to replay,
+ * detecting stripped `signature` (`thought_signature`) fields, orphaned `tool_search_call` or
+ * `tool_search_result` steps, and unsearched calls to deferred functions or remote MCP servers
+ * before they trigger HTTP 400 errors.
+ *
+ * @param {Array<object>} [steps=[]] - Stateless `input` step history array.
+ * @param {object} [options={}] - Validation options (`deferredToolNames`, `deferredMcpServerNames`, `requireFunctionCallSignature`).
+ * @returns {{
+ *   valid: boolean,
+ *   loadedToolNames: string[],
+ *   defects: Array<{ code: string, stepIndex: number, stepType: string, toolName: string | null, detail: string }>
+ * }}
+ */
+export function validateGeminiStatelessToolHistory(steps = [], options = {}) {
+    const safeSteps = Array.isArray(steps) ? steps : [];
+    const safeOpts = options && typeof options === 'object' ? options : {};
+    const deferredSet = new Set(
+        (Array.isArray(safeOpts.deferredToolNames) ? safeOpts.deferredToolNames : [])
+            .map((name) => String(name ?? '').trim())
+            .filter(Boolean)
+    );
+    const deferredMcpSet = new Set(
+        (Array.isArray(safeOpts.deferredMcpServerNames) ? safeOpts.deferredMcpServerNames : [])
+            .map((name) => String(name ?? '').trim())
+            .filter(Boolean)
+    );
+    const forceFnCallSignature = safeOpts.requireFunctionCallSignature === true;
+
+    const defects = [];
+    const loadedSet = new Set();
+    const seenSearchCallIds = new Set();
+    const pendingSearchCalls = new Map();
+    let seenThoughtInTurn = false;
+
+    for (let idx = 0; idx < safeSteps.length; idx += 1) {
+        const step = safeSteps[idx];
+        if (!step || typeof step !== 'object') continue;
+        const stepType = String(step.type ?? '').trim();
+
+        if (stepType === 'user_input' || stepType === 'function_result' || stepType === 'mcp_server_tool_result') {
+            seenThoughtInTurn = false;
+        }
+
+        if (stepType === 'thought') {
+            seenThoughtInTurn = true;
+        }
+
+        if (
+            stepType === 'tool_search_call' ||
+            stepType === 'tool_search_result' ||
+            stepType === 'thought' ||
+            (stepType === 'function_call' && (seenThoughtInTurn || forceFnCallSignature))
+        ) {
+            const sig = typeof step.signature === 'string' ? step.signature.trim() : '';
+            if (!sig) {
+                defects.push({
+                    code: 'MISSING_THOUGHT_SIGNATURE',
+                    stepIndex: idx,
+                    stepType,
+                    toolName: stepType === 'function_call' ? (String(step.name ?? '').trim() || null) : null,
+                    detail: `Step "${stepType}" at index ${idx} is missing its opaque "signature" field required for stateless replay.`
+                });
+            }
+        }
+
+        if (stepType === 'tool_search_call') {
+            const callId = String(step.id ?? '').trim();
+            if (callId) {
+                seenSearchCallIds.add(callId);
+                pendingSearchCalls.set(callId, idx);
+            }
+        } else if (stepType === 'tool_search_result') {
+            const callId = String(step.call_id ?? '').trim();
+            if (!callId || !seenSearchCallIds.has(callId)) {
+                defects.push({
+                    code: 'ORPHANED_TOOL_SEARCH_RESULT',
+                    stepIndex: idx,
+                    stepType,
+                    toolName: null,
+                    detail: `tool_search_result "${callId || '<missing>'}" at index ${idx} has no preceding matching tool_search_call step.`
+                });
+            } else {
+                pendingSearchCalls.delete(callId);
+            }
+            const loadedEntries = Array.isArray(step.result) ? step.result : [];
+            for (const entry of loadedEntries) {
+                const loadedName = extractToolIdentifier(entry);
+                if (loadedName) loadedSet.add(loadedName);
+            }
+        } else if (stepType === 'function_call' || stepType === 'function_result') {
+            const fnName = String(step.name ?? '').trim();
+            if (fnName && deferredSet.has(fnName) && !loadedSet.has(fnName)) {
+                defects.push({
+                    code: 'MISSING_CIRCULATED_TOOL_CONTEXT',
+                    stepIndex: idx,
+                    stepType,
+                    toolName: fnName,
+                    detail: `Deferred function "${fnName}" at step ${idx} (${stepType}) has no preceding tool_search_result loading its schema.`
+                });
+            }
+        } else if (stepType === 'mcp_server_tool_call' || stepType === 'mcp_server_tool_result') {
+            const serverName = String(step.server_name ?? '').trim();
+            const fnName = String(step.name ?? '').trim();
+            const qualifiedName = serverName && fnName ? `${serverName}:${fnName}` : fnName;
+            const requiresSearch = Boolean(
+                (serverName && deferredMcpSet.has(serverName)) ||
+                (qualifiedName && deferredSet.has(qualifiedName)) ||
+                (fnName && deferredSet.has(fnName))
+            );
+            if (requiresSearch && !loadedSet.has(qualifiedName) && !loadedSet.has(fnName)) {
+                defects.push({
+                    code: 'MISSING_CIRCULATED_TOOL_CONTEXT',
+                    stepIndex: idx,
+                    stepType,
+                    toolName: qualifiedName || null,
+                    detail: `Deferred MCP tool "${qualifiedName}" at step ${idx} (${stepType}) has no preceding tool_search_result loading its schema.`
+                });
+            }
+        }
+    }
+
+    for (const [callId, callIdx] of pendingSearchCalls.entries()) {
+        defects.push({
+            code: 'MISSING_TOOL_SEARCH_RESULT',
+            stepIndex: callIdx,
+            stepType: 'tool_search_call',
+            toolName: null,
+            detail: `tool_search_call "${callId}" at index ${callIdx} has no matching tool_search_result step; loaded schemas would be lost on replay.`
+        });
+    }
+
+    return {
+        valid: defects.length === 0,
+        loadedToolNames: Array.from(loadedSet),
+        defects
+    };
+}
+
+/**
  * Wrap `createDeferredToolBridge` (`@krusch/toolkit/harness-engineering`) with token-budget
- * accounting and per-call dispatcher override support (`INV-GH-04`).
+ * accounting, reference-aware auto-pinning, Gemini `v1beta/interactions` Tool Retrieval compilation,
+ * and per-call dispatcher override support (`INV-GH-04`).
  *
  * @param {object} [options={}] - Gate configuration.
  * @returns {{
  *   deferred: boolean,
  *   exposedTools: Array<object>,
+ *   pinnedToolNames: string[],
+ *   autoPinnedToolNames: string[],
  *   savings: ReturnType<typeof measureToolSchemaSavings>,
  *   bridge: object | null,
- *   invokeMetaTool: (name: string, args?: object, overrideDispatcher?: Function) => Promise<object>
+ *   invokeMetaTool: (name: string, args?: object, overrideDispatcher?: Function) => Promise<object>,
+ *   toGeminiInteractionsTools: (geminiOptions?: object) => ReturnType<typeof buildGeminiInteractionsTools>
  * }}
  */
 export function createToolBudgetGate({
     tools = [],
     pinnedToolNames = [],
+    referenceTexts = [],
+    systemPrompt = '',
     deferThreshold = 12,
     forceDefer = false,
     searchTopK = 5,
     dispatcher
 } = {}) {
-    const safeTools = Array.isArray(tools) ? [...tools] : [];
-    const rawBridge = createDeferredToolBridge(safeTools, {
+    const safeTools = deduplicateToolsByName(tools);
+    const {
+        pinnedToolNames: resolvedPinnedToolNames,
+        autoPinnedToolNames
+    } = resolveAutoPinnedToolNames(safeTools, {
         pinnedToolNames,
+        referenceTexts,
+        systemPrompt
+    });
+
+    const rawBridge = createDeferredToolBridge(safeTools, {
+        pinnedToolNames: resolvedPinnedToolNames,
         deferThreshold,
         forceDefer,
         defaultLimit: searchTopK,
@@ -551,12 +1188,26 @@ export function createToolBudgetGate({
         };
     }
 
+    function toGeminiInteractionsTools(geminiOptions = {}) {
+        const safeGeminiOpts = geminiOptions && typeof geminiOptions === 'object' ? geminiOptions : {};
+        return buildGeminiInteractionsTools(safeTools, {
+            pinnedToolNames: resolvedPinnedToolNames,
+            deferThreshold,
+            forceDefer,
+            searchTopK,
+            ...safeGeminiOpts
+        });
+    }
+
     return {
         deferred,
         exposedTools,
+        pinnedToolNames: resolvedPinnedToolNames,
+        autoPinnedToolNames,
         savings,
         bridge: deferred ? rawBridge : null,
-        invokeMetaTool
+        invokeMetaTool,
+        toGeminiInteractionsTools
     };
 }
 
@@ -1862,6 +2513,7 @@ export function createGroundedHarnessLoop(options = {}) {
         fileDigests = {},
         tools = [],
         pinnedToolNames = [],
+        referenceTexts = [],
         deferThreshold = 12,
         forceDefer = false,
         searchTopK = 5,
@@ -1883,9 +2535,17 @@ export function createGroundedHarnessLoop(options = {}) {
         preferThinkingStepForSmallActive
     });
 
+    const combinedReferenceTexts = [
+        ...(Array.isArray(standingInvariants) ? standingInvariants : []),
+        ...(typeof schemaSummaryText === 'string' && schemaSummaryText.trim().length > 0 ? [schemaSummaryText] : []),
+        ...(Array.isArray(referenceTexts) ? referenceTexts : [])
+    ];
+
     const toolGate = createToolBudgetGate({
         tools,
         pinnedToolNames,
+        systemPrompt: baseSystemPrompt,
+        referenceTexts: combinedReferenceTexts,
         deferThreshold,
         forceDefer,
         searchTopK,

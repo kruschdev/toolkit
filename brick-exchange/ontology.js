@@ -3867,29 +3867,35 @@ function sanitizeBindingObject(rawObj) {
     return out;
 }
 
-function buildRepairCascadeChain(moeProfileId, boundedRepairMax) {
+function buildRepairCascadeChain(moeProfileId, boundedRepairMax, customTiers = DEFAULT_FLEET_CASCADE_TIERS) {
+    const activeTiers = Array.isArray(customTiers) && customTiers.length > 0
+        ? customTiers
+        : DEFAULT_FLEET_CASCADE_TIERS;
     const profile =
         (moeProfileId && Object.hasOwn(ONTOLOGY_MOE_PROFILES, moeProfileId)
             ? ONTOLOGY_MOE_PROFILES[moeProfileId]
             : null) || ONTOLOGY_MOE_PROFILES['cross-stack-schema-adapter'];
 
-    const complexityScore =
-        profile.recommendedCascadeTier === 'L2_HEAVY_MOE'
-            ? 0.6
-            : profile.recommendedCascadeTier === 'L3_FRONTIER_ARGON'
-              ? 0.95
-              : 0.2;
+    const isCustomTiers = activeTiers !== DEFAULT_FLEET_CASCADE_TIERS;
+    const complexityScore = isCustomTiers
+        ? 0.2
+        : profile.recommendedCascadeTier === 'L2_HEAVY_MOE'
+          ? 0.6
+          : profile.recommendedCascadeTier === 'L3_FRONTIER_ARGON'
+            ? 0.95
+            : 0.2;
 
     const sel = selectCascadeTier({
         complexityScore,
         requiresTools: true,
-        allowFrontier: profile.fallbackChain.includes('L3_FRONTIER_ARGON'),
-        tiers: DEFAULT_FLEET_CASCADE_TIERS,
+        allowBurst: false,
+        allowFrontier: !isCustomTiers && profile.fallbackChain.includes('L3_FRONTIER_ARGON'),
+        tiers: activeTiers,
     });
 
     const baseTiers = sel.ok && sel.data.candidateChain.length > 0
         ? sel.data.candidateChain
-        : DEFAULT_FLEET_CASCADE_TIERS.filter((t) => !t.isBurst && !t.isFrontier);
+        : activeTiers.filter((t) => !t.isBurst && !t.isFrontier);
 
     const schedule = [];
     for (let idx = 0; idx < boundedRepairMax; idx += 1) {
@@ -3971,6 +3977,7 @@ export async function synthesizeBrickBinding(options = {}) {
         bindingOverrides = {},
         repairFn = null,
         maxRepairAttempts = 2,
+        tiers = DEFAULT_FLEET_CASCADE_TIERS,
         timeoutMs,
         maxMemoryMb,
     } = options;
@@ -4053,7 +4060,7 @@ export async function synthesizeBrickBinding(options = {}) {
         let cascadeAttempts = [];
 
         if (!tryRes.ok && typeof repairFn === 'function' && boundedRepairMax >= 1) {
-            const repairChain = buildRepairCascadeChain(ontology.moeProfile, boundedRepairMax);
+            const repairChain = buildRepairCascadeChain(ontology.moeProfile, boundedRepairMax, tiers);
             let forbiddenRepairKey = null;
 
             const cascadeExec = await executeWithCascadeFallback(

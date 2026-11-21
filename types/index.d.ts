@@ -24,7 +24,9 @@ export {
     resolveMaxOutputTokens,
     resolveGeminiToolConfig,
     buildGeminiPayload,
-    extractGeminiTextParts
+    extractGeminiTextParts,
+    scoreThreeChairDifficulty,
+    createThreeChairCascadeRouter
 } from './llm.js';
 export type {
     LLMProvider,
@@ -763,6 +765,7 @@ export type {
 // Wave 4 Multi-Tier LLM Cascade, Single-Flight Circuit Breaker & Burst Probe (@krusch/toolkit/cascade)
 export {
     DEFAULT_FLEET_CASCADE_TIERS,
+    THREE_CHAIR_BANDIT_TIERS,
     createTierCircuitBreaker,
     selectCascadeTier,
     probeBurstEndpoint,
@@ -838,10 +841,16 @@ export type {
 // Turn-0 Grounded, Scale-Aware, Low-Tool-Call Harness Bricks (@krusch/toolkit/grounded-harness)
 export {
     SCALE_TIERS,
+    GEMINI_TOOL_RETRIEVAL_MODELS,
     inferModelScaleMetadata,
     resolveScaleProfile,
     buildScaleAwareDirective,
     measureToolSchemaSavings,
+    isGeminiToolRetrievalSupported,
+    resolveAutoPinnedToolNames,
+    deriveToolShortDescription,
+    buildGeminiInteractionsTools,
+    validateGeminiStatelessToolHistory,
     createToolBudgetGate,
     createDeltaContextTracker,
     buildSafeGeminiToolConfig,
@@ -859,6 +868,23 @@ export type {
     ResolveScaleProfileOptions,
     ScaleProfile,
     ToolSchemaSavings,
+    GeminiToolRetrievalMode,
+    AutoPinnedToolNamesResult,
+    DeriveToolShortDescriptionOptions,
+    GeminiRemoteMcpServerConfig,
+    GeminiFunctionDeclarationEntry,
+    GeminiServerToolSearchEntry,
+    GeminiClientToolSearchEntry,
+    GeminiToolSearchEntry,
+    GeminiMcpServerToolEntry,
+    GeminiInteractionsToolEntry,
+    GeminiClientToolSearchCallInput,
+    GeminiClientToolSearchResultStep,
+    BuildGeminiInteractionsToolsOptions,
+    GeminiInteractionsToolCompilation,
+    StatelessToolHistoryDefectCode,
+    StatelessToolHistoryDefect,
+    StatelessToolHistoryValidationResult,
     ToolBudgetGateOptions,
     ToolBudgetGate,
     DeltaContextTrackerOptions,

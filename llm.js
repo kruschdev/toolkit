@@ -10,8 +10,30 @@
 import { parseAIJson } from './json-parse.js';
 import { Agent, setGlobalDispatcher } from 'undici';
 import { startSpan, endSpan } from './tracing.js';
+import {
+    THREE_CHAIR_BANDIT_TIERS,
+    createTierCircuitBreaker,
+    selectCascadeTier,
+    executeWithCascadeFallback,
+} from './cascade.js';
 
 let cachedCascadeRouterClass;
+let cachedCascadeModule;
+const sharedThreeChairBreaker = createTierCircuitBreaker({
+    failureThreshold: 3,
+    cooldownMs: 30_000,
+});
+
+async function loadCascadeRouterModule() {
+    if (cachedCascadeModule === undefined) {
+        try {
+            cachedCascadeModule = await import('krusch-cascade-router');
+        } catch {
+            cachedCascadeModule = null;
+        }
+    }
+    return cachedCascadeModule;
+}
 
 /**
  * Lazily load optional `krusch-cascade-router` so `@krusch/toolkit/llm` imports cleanly without it.
@@ -20,17 +42,202 @@ let cachedCascadeRouterClass;
  */
 async function loadCascadeRouterClass() {
     if (cachedCascadeRouterClass === undefined) {
-        try {
-            const mod = await import('krusch-cascade-router');
-            cachedCascadeRouterClass = mod?.CascadeRouter ?? mod?.default ?? null;
-        } catch {
-            cachedCascadeRouterClass = null;
-        }
+        const mod = await loadCascadeRouterModule();
+        cachedCascadeRouterClass = mod?.CascadeRouter ?? mod?.default ?? null;
     }
     if (!cachedCascadeRouterClass) {
         throw new Error('Optional dependency krusch-cascade-router is not installed');
     }
     return cachedCascadeRouterClass;
+}
+
+/**
+ * Compute normalized task difficulty `[0, 1]` using `krusch-cascade-router`'s `<25µs` L0
+ * `classifyPreRoute` / `evaluateComplexityScore` when installed, with a deterministic
+ * heuristic fallback when running standalone.
+ *
+ * @param {string} promptText
+ * @param {object} [hints={}]
+ * @returns {Promise<{ complexityScore: number, role: string }>}
+ */
+export async function scoreThreeChairDifficulty(promptText = '', hints = {}) {
+    if (typeof hints.complexityScore === 'number' && Number.isFinite(hints.complexityScore)) {
+        return {
+            complexityScore: Math.min(1, Math.max(0, hints.complexityScore)),
+            role: String(hints.role || 'explicit'),
+        };
+    }
+    const text = String(promptText || '');
+    const mod = await loadCascadeRouterModule();
+    if (mod && typeof mod.classifyPreRoute === 'function') {
+        const pre = mod.classifyPreRoute(text);
+        let score = Number.isFinite(pre?.complexityScore) ? pre.complexityScore : 0.25;
+        const role = String(pre?.role || 'general_fast');
+        if (role === 'reasoning_deep' || role === 'comprehension_rc') {
+            score = Math.max(score, 0.76);
+        } else if (role === 'code' || role === 'reasoning_fast') {
+            score = Math.max(score, 0.45);
+        }
+        if (
+            /\b(?:compose\s+(?:3|three|multiple)|multi-file|root\s*cause|architectur(?:e|al)|pipeline|blast\s*radius|invariant\s*audit|swe-bench)\b/i.test(
+                text
+            ) ||
+            text.length > 6000
+        ) {
+            score = Math.max(score, 0.78);
+        }
+        return { complexityScore: Math.min(1, Math.max(0, score)), role };
+    }
+
+    let score = 0.2;
+    if (/\b(?:function|class|adapter|binding|implement|refactor|schema|sql|typescript|python)\b/i.test(text)) {
+        score = Math.max(score, 0.5);
+    }
+    if (
+        /\b(?:compose|multi-file|root\s*cause|architectur(?:e|al)|pipeline|blast\s*radius|audit|deadlock|race\s*condition)\b/i.test(
+            text
+        ) ||
+        text.length > 6000
+    ) {
+        score = Math.max(score, 0.8);
+    }
+    return { complexityScore: score, role: score > 0.68 ? 'reasoning_deep' : score > 0.35 ? 'code' : 'general_fast' };
+}
+
+/**
+ * Create a stateless 3-Chair Sovereign Cascade Router binding:
+ *   - Layer 1 / 3rd Chair (`OLLAMA_THIRD_CHAIR_URL`): `gemma4:e2b` (`<= 0.35`)
+ *   - Layer 2 / 2nd Chair (`LLAMA_SECOND_CHAIR_URL`): `qwen3-coder-30b-moe:latest` (`0.35 - 0.68`)
+ *   - Layer 3 / 1st Chair (`LLAMA_FIRST_CHAIR_URL`): `inkling-2-mini:ud-iq4_xs-dspark` (`> 0.68`)
+ *
+ * Designed for Database-First State Inversion: callers hydrate Common Ground / Golden Brick
+ * truth up front, lease the lowest sufficient stateless GPU chair, and automatically escalate
+ * up the 3 chairs on runtime error, timeout, or custom `verifyResult` failure.
+ *
+ * @param {object} [routerOptions={}]
+ */
+export function createThreeChairCascadeRouter(routerOptions = {}) {
+    const tiers = routerOptions.tiers || THREE_CHAIR_BANDIT_TIERS;
+    const breaker = routerOptions.breaker !== undefined ? routerOptions.breaker : sharedThreeChairBreaker;
+    const allowBurst = Boolean(routerOptions.allowBurst);
+    const allowFrontier = Boolean(routerOptions.allowFrontier);
+    const perAttemptTimeoutMs = routerOptions.perAttemptTimeoutMs ?? 180_000;
+    const env = routerOptions.env || process.env;
+
+    return {
+        tiers,
+        breaker,
+        async routeAndExecute(systemPrompt, userMessage, config = {}, options = {}) {
+            const messages = options.messages || config.messages;
+            const joinedUser = Array.isArray(messages)
+                ? messages
+                      .filter((m) => m && m.role === 'user')
+                      .map((m) => String(m.content || ''))
+                      .join('\n')
+                : String(userMessage || '');
+            const { complexityScore, role } = await scoreThreeChairDifficulty(joinedUser, {
+                complexityScore: options.complexityScore ?? config.complexityScore,
+                role: options.specialistRole ?? config.specialistRole,
+            });
+            const estimatedTokens = Math.ceil(
+                (String(systemPrompt || '').length + joinedUser.length) / 3.8
+            );
+            const hasTools = Array.isArray(options.tools ?? config.tools) && (options.tools ?? config.tools).length > 0;
+
+            const plan = selectCascadeTier({
+                complexityScore: options.useAnalysisModel ? Math.max(complexityScore, 0.8) : complexityScore,
+                estimatedTokens,
+                requiresTools: hasTools,
+                allowBurst: options.allowBurst ?? config.allowBurst ?? allowBurst,
+                allowFrontier: options.allowFrontier ?? config.allowFrontier ?? allowFrontier,
+                tiers,
+                breaker,
+                env,
+                tool: 'llm.three_chair.select',
+            });
+            if (!plan.ok) {
+                throw new Error(plan.error?.message || 'No healthy 3-Chair cascade tier available');
+            }
+
+            const verifyResult = options.verifyResult || config.verifyResult || null;
+            const execEnv = await executeWithCascadeFallback(
+                plan.data.candidateChain,
+                async (tier, { signal, attemptIndex }) => {
+                    const baseEndpoint = String(tier.endpointUrl || tier.defaultUrl || '').replace(/\/+$/, '');
+                    const apiUrl = baseEndpoint.endsWith('/v1/chat/completions')
+                        ? baseEndpoint
+                        : `${baseEndpoint}/v1/chat/completions`;
+                    const tierModel = tier.model || tier.defaultModel;
+                    const isInkling = /^inkling/i.test(tierModel);
+                    const defaultTierMax = isInkling ? 6144 : 4096;
+                    const callMaxTokens =
+                        options.maxTokens ??
+                        config.maxTokens ??
+                        defaultTierMax;
+
+                    if (tier.provider === 'gemini') {
+                        return chatGemini(
+                            systemPrompt,
+                            userMessage,
+                            {
+                                ...config,
+                                provider: 'gemini',
+                                model: tierModel,
+                                apiKey: config.apiKey || env?.GEMINI_API_KEY || env?.GOOGLE_API_KEY,
+                                maxTokens: resolveMaxOutputTokens(tierModel, config, options),
+                            },
+                            { ...options, signal }
+                        );
+                    }
+
+                    const res = await chatOpenAICompat(
+                        systemPrompt,
+                        userMessage,
+                        {
+                            ...config,
+                            provider: 'ollama',
+                            model: tierModel,
+                            apiUrl,
+                            temperature: options.temperature ?? config.temperature ?? (isInkling ? 0.2 : 0.2),
+                            maxTokens: isInkling && callMaxTokens < 4096 && !options.strictMaxTokens ? 6144 : callMaxTokens,
+                            tools: options.tools ?? config.tools,
+                        },
+                        { ...options, signal }
+                    );
+
+                    if (typeof verifyResult === 'function') {
+                        const gate = await verifyResult(res, { tier, attemptIndex, complexityScore, role });
+                        if (gate && gate.ok === false) {
+                            throw new Error(gate.reason || `Verification gate rejected output on ${tier.id}`);
+                        }
+                    }
+                    return {
+                        ...res,
+                        routedTierId: tier.id,
+                        routedModel: tierModel,
+                        routedEndpoint: baseEndpoint,
+                        complexityScore,
+                        specialistRole: role,
+                    };
+                },
+                {
+                    breaker,
+                    perAttemptTimeoutMs: options.timeout || config.timeout || perAttemptTimeoutMs,
+                    signal: options.signal || null,
+                    tool: 'llm.three_chair.execute',
+                }
+            );
+
+            if (!execEnv.ok) {
+                throw new Error(execEnv.error?.message || '3-Chair cascade exhausted');
+            }
+            return {
+                ...execEnv.data.result,
+                attemptCount: execEnv.data.attemptCount,
+                attempts: execEnv.data.attempts,
+            };
+        },
+    };
 }
 
 // Overcome the 5-minute Undici headersTimeout for heavily-queued local Ollama requests
@@ -222,6 +429,19 @@ export async function chat(systemPrompt, userMessage, config, options = {}) {
         // If we didn't cascade, or if cascade aborted/failed
         if (!result) {
             switch (provider) {
+                case 'three-chair': {
+                    const threeChair = createThreeChairCascadeRouter({
+                        tiers: resolvedConfig.tiers || options.tiers,
+                        breaker: resolvedConfig.breaker ?? options.breaker,
+                        allowBurst: Boolean(options.allowBurst ?? resolvedConfig.allowBurst),
+                        allowFrontier: Boolean(options.allowFrontier ?? resolvedConfig.allowFrontier),
+                        perAttemptTimeoutMs: options.timeout || resolvedConfig.timeout || 180_000,
+                    });
+                    result = await threeChair.routeAndExecute(systemPrompt, userMessage, resolvedConfig, options);
+                    routedPath = result.routedTierId || 'three-chair';
+                    resolvedConfig.model = result.routedModel || resolvedConfig.model || 'three-chair';
+                    break;
+                }
                 case 'gemini':
                     result = await chatGemini(systemPrompt, userMessage, resolvedConfig, options);
                     break;

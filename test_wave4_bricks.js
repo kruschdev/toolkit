@@ -288,6 +288,7 @@ test('INV-LEGO-19: @krusch/toolkit/cascade <25us tier selector, single-flight HA
 
     const {
         DEFAULT_FLEET_CASCADE_TIERS,
+        THREE_CHAIR_BANDIT_TIERS,
         createTierCircuitBreaker,
         selectCascadeTier,
         probeBurstEndpoint,
@@ -295,6 +296,16 @@ test('INV-LEGO-19: @krusch/toolkit/cascade <25us tier selector, single-flight HA
     } = await import('./cascade.js');
 
     assert.equal(DEFAULT_FLEET_CASCADE_TIERS.length, 4);
+    assert.equal(THREE_CHAIR_BANDIT_TIERS.length, 5);
+    const easyChair = selectCascadeTier({ complexityScore: 0.2, tiers: THREE_CHAIR_BANDIT_TIERS, allowFrontier: false });
+    assert.equal(easyChair.data.selectedTier.id, 'L1_THIRD_CHAIR_FAST');
+    assert.equal(easyChair.data.selectedTier.defaultModel, 'gemma4:e2b');
+    const medChair = selectCascadeTier({ complexityScore: 0.5, tiers: THREE_CHAIR_BANDIT_TIERS, allowFrontier: false });
+    assert.equal(medChair.data.selectedTier.id, 'L2_SECOND_CHAIR_CODER');
+    assert.equal(medChair.data.selectedTier.defaultModel, 'qwen3-coder-30b-moe:latest');
+    const hardChair = selectCascadeTier({ complexityScore: 0.85, tiers: THREE_CHAIR_BANDIT_TIERS, allowFrontier: false });
+    assert.equal(hardChair.data.selectedTier.id, 'L2_FIRST_CHAIR_INKLING');
+    assert.equal(hardChair.data.selectedTier.defaultModel, 'inkling-2-mini:ud-iq4_xs-dspark');
 
     let nowMs = 1_000_000;
     const breaker = createTierCircuitBreaker({
@@ -343,6 +354,16 @@ test('INV-LEGO-19: @krusch/toolkit/cascade <25us tier selector, single-flight HA
     });
     assert.equal(probeOk.ok, true);
     assert.equal(probeOk.data.modelReady, true);
+
+    const probeLlamaServer = await probeBurstEndpoint('http://127.0.0.1:18080', {
+        expectedModel: 'inkling-2-mini:ud-iq4_xs-dspark',
+        fetchImpl: async (url) =>
+            String(url).endsWith('/api/tags')
+                ? new Response('Not Found', { status: 404 })
+                : new Response(JSON.stringify({ data: [{ id: 'inkling-2-mini:ud-iq4_xs-dspark' }] }), { status: 200 })
+    });
+    assert.equal(probeLlamaServer.ok, true);
+    assert.equal(probeLlamaServer.data.modelReady, true);
 
     // Fallback execution: L1 fails -> L2 succeeds
     const execRes = await executeWithCascadeFallback(
